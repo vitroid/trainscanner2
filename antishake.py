@@ -43,10 +43,10 @@ class AntiShaker2:
             self._velocity : -self._velocity, self._velocity : -self._velocity
         ] = self._last_frame
         scores = cv2.matchTemplate(frame0_extend, frame_std * mask, cv2.TM_CCORR)
-        print(scores)
+        # print(scores)
         _, _, _, max_loc = cv2.minMaxLoc(scores)
         dx, dy = (max_loc[0] - self._velocity, max_loc[1] - self._velocity)
-        print(f"{dx=} {dy=}")
+        # print(f"{dx=} {dy=}")
         self._absx += dx
         self._absy += dy
         diff_img = self._last_frame.copy()
