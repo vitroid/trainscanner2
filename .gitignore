@@ -208,3 +208,6 @@ __marimo__/
 poetry.lock
 motions.json
 *.png
+motions_test.json
+*.pngs/
+

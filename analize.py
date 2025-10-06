@@ -1,8 +1,9 @@
 import cv2
 import numpy as np
 import sys
-from matplotlib import pyplot as plt
 from scipy.signal import find_peaks
+from logging import getLogger, DEBUG, basicConfig
+import json
 
 # from sklearn.mixture import GaussianMixture
 import matplotlib as mpl
@@ -10,7 +11,7 @@ from antishake import AntiShaker2
 from trainscanner.image import match, linear_alpha, standardize
 from tiffeditor import Rect
 from trainscanner.video import video_loader_factory
-from tiledimage.cachedimage import CachedImage
+from trainscanner.image import MatchScore
 from dataclasses import dataclass
 
 # Stitchは問題なく動いているので、速度予測の精度を上げることにもうちょっと注力する。
@@ -242,54 +243,34 @@ def rotated_placement(frame, sine, cosine, train_position):
     )
 
 
-# 動画を読み込む
-if len(sys.argv) < 2:
-    videofile = "examples/sample3.mov"
-    videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/他人の動画/antishake test/Untitled.mp4"
-else:
-    videofile = sys.argv[1]
+def analyze_iter(vl, scaling_ratio=1.0):
+    logger = getLogger(__name__)
 
+    blurmask = BlurMask(lifetime=20)
+    antishaker = AntiShaker2(velocity=1)
+    # # 背景のずれ
+    # framepositions = {}
 
-# cv2.imshow("alpha", alpha_mask((1000, 2000), (50, 15), width=50))
-# cv2.waitKey(0)
-# sys.exit(0)
+    raw_frame = vl.next()
+    raw_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
+    unblurred_scaled_frames = FIFO(2)
+    estimate = 5
+    unblurred_scaled_frame_history = FIFO(estimate)
+    unblurred_scaled_frames.append(raw_frame)
+    unblurred_scaled_frame_history.append(raw_frame)
 
-frames = FIFO(2)
-vl = video_loader_factory(videofile)
-if "0835" in videofile:
-    vl.seek(47 * 30)
-frame0 = vl.next()
-if frame0.shape[1] > 500:
-    ratio = 500 / frame0.shape[1]
-    frame0 = cv2.resize(frame0, (0, 0), fx=ratio, fy=ratio)
-frames.append(frame0)
+    mask = np.ones(unblurred_scaled_frames.queue[0].shape[:2], dtype=np.float32)
 
-blurmask = BlurMask(lifetime=20)
-antishaker = AntiShaker2(velocity=1)
-# 背景のずれ
-framepositions = {}
-stabilized = False
-max_vals = []
-longest_span = (0, 0)
-# number of frames to estimate the velocity
-estimate = 5
-velx_history = FIFO(estimate)
-vely_history = FIFO(estimate)
-frame_history = FIFO(estimate)
-train_deltas = []
-train_position = 0
-mask = np.ones(frames.queue[0].shape[:2], dtype=np.float32)
-matchscores = []
-with CachedImage("new", dir="test_translation.pngs") as canvas:
     while True:
+        frame_index = vl.head
         raw_frame = vl.next()
         if raw_frame is None:
             break
 
-        # 大きい場合は半分に縮小
-        if raw_frame.shape[1] > 500:
-            ratio = 500 / raw_frame.shape[1]
-            raw_frame = cv2.resize(raw_frame, (0, 0), fx=ratio, fy=ratio)
+        scaled_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
+        del raw_frame
+
+        height, width = scaled_frame.shape[:2]
 
         # antimask = np.exp(-mask)
         if np.max(mask) == np.min(mask):
@@ -297,224 +278,135 @@ with CachedImage("new", dir="test_translation.pngs") as canvas:
         else:
             antimask = 1 - normalize(mask)
 
-        unshaken_frame, delta, abs_loc = antishaker.add_frame(raw_frame, antimask)
+        unblurred_scaled_frame, delta, abs_loc = antishaker.add_frame(
+            scaled_frame, antimask
+        )
 
         # framesにはてぶれを修正し,最初のフレームの位置に背景がそろえられた画像が入るので、あとの処理は列車の動きだけ考えればいい。
-        frames.append(unshaken_frame)
-        frame_history.append(unshaken_frame)
+        unblurred_scaled_frames.append(unblurred_scaled_frame)
+        unblurred_scaled_frame_history.append(unblurred_scaled_frame)
 
-        frame_index = vl.head - 1
-        print(f"{frame_index=} {delta=} {abs_loc=}")
-        framepositions[frame_index] = FramePosition(
-            index=frame_index, train_velocity=None, absolute_location=abs_loc
+        logger.info(f"{frame_index=} {delta=} {abs_loc=}")
+        # framepositions[frame_index] = FramePosition(
+        #     index=frame_index, train_velocity=None, absolute_location=abs_loc
+        # )
+
+        averaged_background = np.zeros_like(
+            unblurred_scaled_frames.queue[0], dtype=np.float32
         )
-
-        averaged_background = np.zeros_like(frames.queue[0], dtype=np.float32)
-        for fh in frame_history.queue:
+        for fh in unblurred_scaled_frame_history.queue:
             averaged_background += fh
-        cv2.imshow(
-            "averaged_background", averaged_background / len(frame_history.queue) / 255
-        )
-        avg_std = standardize(
+        averaged_background /= len(unblurred_scaled_frame_history.queue)
+
+        std_log_gray_avg = standardize(
             np.log(
                 cv2.cvtColor(averaged_background, cv2.COLOR_BGR2GRAY).astype(np.float32)
                 + 1
             )
         )
-        cv2.imshow("avg_std", avg_std)
         # グレースケールに変換
-        base_std = (
+        base_frame = unblurred_scaled_frames.queue[0]
+        next_frame = unblurred_scaled_frames.queue[1]
+
+        antimasked_std_log_gray_base = (
             standardize(
                 np.log(
-                    cv2.cvtColor(frames.queue[0], cv2.COLOR_BGR2GRAY).astype(np.float32)
-                    + 1
+                    cv2.cvtColor(base_frame, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1
                 )
             )
             * antimask
         )
-        next_std = (
+        antimasked_std_log_gray_next = (
             standardize(
                 np.log(
-                    cv2.cvtColor(frames.queue[1], cv2.COLOR_BGR2GRAY).astype(np.float32)
-                    + 1
+                    cv2.cvtColor(next_frame, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1
                 )
             )
             * antimask
         )
-        cv2.imshow("base_std", base_std)
-        cv2.imshow("next_std", next_std)
-        diff = (base_std - next_std) ** 2
-        cv2.imshow("differ", diff)
+
+        diff = (antimasked_std_log_gray_base - antimasked_std_log_gray_next) ** 2
         mask = blurmask.add_frame(diff)
 
-        # 2025-09 ここからあとは、本家Trainscanner同様に、変位速度が落ちつくまで様子を見てから、以後はそれを第一予測として利用する。また、leadingの処理も行う。
-        # しばらくはこれから離れて仕事する。
-
-        # 差をとると、列車が動いている部分は、ある場所が鋭く正に、すこしずれて鋭く負になる。
-        # 差が小さい部分は背景の可能性が高いので、照合から除外する。
-        # つまり、原画上で0にしてしまう。
-        # diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-
         # maskは、diffの値が大きいピクセル。
-        print(f"mask {np.min(mask)}, {np.max(mask)}")
+        logger.info(f"mask {np.min(mask)}, {np.max(mask)}")
         mask += np.min(mask)
 
-        base_masked = base_std.copy() - avg_std  # * mask
-        # マスクで重みづけした上で、内積で照合する(TM_CCORR)
-        next_masked = next_std.copy() - avg_std  # * mask
+        # 平均背景をさしひいて、前景を強調する。
+        base_masked = antimasked_std_log_gray_base.copy() - std_log_gray_avg  # * mask
+        next_masked = antimasked_std_log_gray_next.copy() - std_log_gray_avg  # * mask
 
         # こんどは移動量をたっぷりとる。
         max_shift = 100
 
         base_masked_extended = np.zeros(
-            [base_std.shape[0] + 2 * max_shift, base_std.shape[1] + 2 * max_shift],
+            [height + 2 * max_shift, width + 2 * max_shift],
             dtype=np.float32,
         )
         base_masked_extended[max_shift:-max_shift, max_shift:-max_shift] = base_masked
         base_extended_rect = Rect.from_bounds(
             -max_shift,
-            base_std.shape[1] + max_shift,
+            width + max_shift,
             -max_shift,
-            base_std.shape[0] + max_shift,
+            height + max_shift,
         )
         next_rect = Rect.from_bounds(
             0,
-            next_std.shape[1],
+            width,
             0,
-            next_std.shape[0],
+            height,
         )
         matchscore = match(
             base_masked_extended, base_extended_rect, next_masked, next_rect
         )
 
-        # 画面中心はいつもピークがあるが、それは列車の移動と関係ないので除去する。
-        # peak_suppression(matchscore.value, (max_shift, max_shift))
-        # これによってすべてのピクセルが0になってしまう場合がありうる。
+        # video frame index, absolute location of the frame, matchscore
+        yield frame_index, abs_loc, matchscore
 
-        # leading framesでの速度予測のために記録しておく。
-        matchscores.append(matchscore)
 
-        _, max_val1, _, max_loc = cv2.minMaxLoc(matchscore.value)
-        delta = (matchscore.dx[max_loc[0]], matchscore.dy[max_loc[1]])
-        train_deltas.append(delta)
+class Storer:
+    # withで使えるようにしたい。
+    def __init__(self, filename: str):
+        self.filename = filename
+        self.matchscores = {}
 
-        velx_history.append(delta[0])
-        vely_history.append(delta[1])
-        if stabilized:
+    def __enter__(self):
+        return self
 
-            framepositions[frame_index].train_velocity = delta
-            dx, dy = delta
-            dd = -((dx**2 + dy**2) ** 0.5)
-            if dd > 0:
-                train_position += dd
-                cosine = dx / dd
-                sine = dy / dd
-                rotated_placement(raw_frame, sine, cosine, train_position)
-        elif (
-            velx_history.filled
-            and velx_history.fluctuation() < 3
-            and vely_history.fluctuation() < 3
+    def __exit__(self, exc_type, exc_value, traceback):
+        with open(self.filename, "w") as f:
+            json.dump(self.matchscores, f)
+
+    def append(self, frame_index, absolute_position, matchscore: MatchScore):
+        self.matchscores[frame_index] = {}
+        self.matchscores[frame_index]["absolute_position"] = absolute_position
+        dx = str(matchscore.dx)
+        dy = str(matchscore.dy)
+        value = matchscore.value
+        self.matchscores[frame_index]["value"] = value.tolist()
+        self.matchscores[frame_index]["dx"] = dx
+        self.matchscores[frame_index]["dy"] = dy
+
+
+def main():
+    basicConfig(level=DEBUG)
+    # 動画を読み込む
+    if len(sys.argv) < 2:
+        videofile = "examples/sample3.mov"
+        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/他人の動画/antishake test/Untitled.mp4"
+
+    else:
+        videofile = sys.argv[1]
+    vl = video_loader_factory(videofile)
+    if "0835" in videofile:
+        vl.seek(47 * 30)
+
+    with Storer("motions_test.json") as storer:
+        for frame_index, absolute_position, matchscore in analyze_iter(
+            vl, scaling_ratio=1.0
         ):
-            # pass
-            stabilized = True
-            for fi in range(estimate):
-                # 最後のestimate個の速度は安定しているので、さかのぼって採用する。
-                delta = (velx_history.queue[fi], vely_history.queue[fi])
-                framepositions[frame_index].train_velocity = delta
-                dx, dy = delta
-                dd = -((dx**2 + dy**2) ** 0.5)
-                if dd > 0:
-                    train_position += dd
-                    cosine = dx / dd
-                    sine = dy / dd
-                    rotated_placement(raw_frame, sine, cosine, train_position)
-            #         vely_history.queue[fi],
-            #     )
-            #     train_position[0] += velx_history.queue[fi]
-            #     train_position[1] += vely_history.queue[fi]
-            #     absx, absy = train_position
-            #     h, w = frame.shape[:2]
-            #     alpha = alpha_mask(
-            #         (w, h), (velx_history.queue[fi], vely_history.queue[fi]), width=200
-            #     )
-            #     canvas.put_image((absx, absy), frame, full_alpha=alpha)
-        for fp in list(framepositions.keys())[-6:]:
-            print(framepositions[fp])
-
-        max_vals.append(max_val1)
-
-        # プロットのx軸が幅広すぎる場合に圧縮する
-        if len(train_deltas) > max_shift * 2:
-            x = np.linspace(-max_shift, max_shift, len(train_deltas))
-        else:
-            x = [i - max_shift for i in range(len(train_deltas))]
-
-        if stabilized:
-            canvas_image = canvas.get_image()
-            if canvas_image is not None:
-                cv2.imshow("canvas", canvas_image)
-        cv2.imshow("mask", mask)
-        cv2.imshow("reversed mask", antimask)
-        cv2.imshow("base_masked", base_masked)
-        cv2.imshow("next_masked", next_masked)
-        # cv2.imshow("raw_diff", frames[0] - frames[1])
-        # cv2.imshow("as_diff", frames[0] - frame)
-
-        plt.imshow(
-            matchscore.value, extent=[-max_shift, max_shift, -max_shift, max_shift]
-        )
-
-        # ピーク位置に赤い丸を描画
-        peaks = find_2d_peaks(matchscore.value, num_peaks=10)
-        for i, (y, x) in enumerate(peaks):
-            # スコア座標系をプロット座標系に変換
-            x = matchscore.dx[x]
-            y = matchscore.dy[y]
-
-            plt.plot(
-                x,
-                y,
-                "ro",
-                markersize=8,
-                markerfacecolor=None,
-                # markeredgecolor="red",
-                markeredgewidth=1,
-            )
-            # ピークの順位を表示
-            plt.text(
-                x + 2,
-                y + 2,
-                str(i + 1),
-                color="white",
-                fontsize=10,
-                fontweight="bold",
-            )
-
-        plt.colorbar(label="Correlation Score")
-        plt.title(f"Correlation Scores with Top 4 Peaks (Frame {len(train_deltas)})")
-        plt.xlabel("X Shift")
-        plt.ylabel("Y Shift")
-        plt.savefig("scores.png")
-        plt.close()
-        cv2.imshow("scores", cv2.imread("scores.png"))
-        cv2.waitKey(1)
+            storer.append(frame_index, absolute_position, matchscore)
 
 
-import json
-
-j = dict()
-
-for i, matchscore in enumerate(matchscores):
-    dx = str(matchscore.dx)
-    dy = str(matchscore.dy)
-    value = matchscore.value
-    j[i] = dict()
-    j[i]["value"] = value.tolist()
-    j[i]["dx"] = dx
-    j[i]["dy"] = dy
-
-# ピークの追跡は別プログラムにまかせる。
-with open("motions.json", "w") as f:
-    json.dump(j, f)
-
-# けっこううまいこといくが、迷子にならないような工夫が必要。
+if __name__ == "__main__":
+    main()
