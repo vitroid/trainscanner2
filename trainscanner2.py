@@ -8,11 +8,12 @@ import numpy as np
 import cv2
 from tiledimage.cachedimage import CachedImage
 
-scale = 0.25
+scale = 1.0
 
 # DONE
 # てぶれ補正できてない。
 
+# 自動スケールがほしい。
 # 同一軌道へ収束している軌道は併合してよい。treeの解析がほしい。
 # なぜ平均スコアが0.3を大幅に下回る絵ができるのか=最後の0スコア点が平均を下げている?
 # めっちゃ短いのにスコアがとても高いのは、たぶん背景なんだが、背景(0,0)をどの時点で排除するか。
@@ -49,13 +50,31 @@ def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
 
 
 def render(vl, frame_positions, history, id=0):
+    logger = getLogger(__name__)
+    train_position = 0
+
+    # まず、画像全体の配置を調査する。短かすぎる画像は生成するまでもない。
+    for h in history:
+        delta = h.xy
+        frame_index, value = h.value
+        dx, dy = delta
+        dd = (dx**2 + dy**2) ** 0.5
+        train_position += dd
+
+    if train_position < len(history) * 2:
+        # trainscanner2はあまりにも遅い列車の動きには対応していないので、100フレームで200pixelも進んでいないならそれは背景にすぎない。
+        logger.debug(f"Ignore static image {id=} {train_position=} {len(history)=}")
+        return
+
     train_position = 0
     scores = []
     first = True
+
     with CachedImage(mode="new", dir=f"test{id}.pngs") as canvas:
         for h in history:
             delta = h.xy
             frame_index, value = h.value
+            logger.debug(f"{id=} {frame_index=} {delta=} ")
             scores.append(value)
             dx, dy = delta
             dd = -((dx**2 + dy**2) ** 0.5)
@@ -101,7 +120,7 @@ def main():
         for frame_index, absolute_position, matchscore in analyze_iter(
             vl, scaling_ratio=scale
         ):
-            logger.info(f"{frame_index=} {absolute_position=}")
+            logger.debug(f"{frame_index=} {absolute_position=}")
             frame_positions[frame_index] = absolute_position
             yield frame_index, matchscore
 
