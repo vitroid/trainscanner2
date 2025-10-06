@@ -100,6 +100,10 @@ class MotionDetector:
         for frame_index, matchscore in iterator():
             yield from self._detect(matchscore, frame_index=frame_index, plot=plot)
 
+        # 最後まで生きのこったpathをpurgeする。
+        for p in self.flowing_points.keys():
+            yield p, self.flowing_points[p].history
+
     def _detect(self, matchscore: MatchScore, frame_index: int = None, plot=False):
         # persistentに直前までのピーク位置の履歴が保存されていて、
         # それぞれの新しい位置をカルマンフィルタで予測する。
@@ -144,9 +148,9 @@ class MotionDetector:
             missed_duration = self.flowing_points[p].missed(
                 dummy_value=(frame_index, 0)
             )
-            if missed_duration > 3:
-                self.logger.info(f"long missed {p=} {missed_duration=}")
-                # 出力用に形をととのえる。長さ10フレーム以上のシーケンスに限定する。
+            if missed_duration > 5:
+                self.logger.debug(f"long missed {p=} {missed_duration=}")
+                # 長さ10フレーム以上のシーケンスに限定する。
                 if len(self.flowing_points[p].history) >= 10:
                     yield p, self.flowing_points[p].history
                 del self.flowing_points[p]
@@ -158,6 +162,38 @@ class MotionDetector:
             )
             self.next_label += 1
 
+        path_labels = list(self.flowing_points.keys())
+        self.logger.debug(f"{path_labels=}")
+
+        final_path = dict()
+        dropped_paths = set()
+
+        for p in path_labels:
+            if len(self.flowing_points[p].history) < 3:
+                continue
+            tail = tuple(
+                [
+                    (int(h.xy[0]), int(h.xy[1]))
+                    for h in self.flowing_points[p].history[-3:]
+                ]
+            )
+            if tail in final_path:
+                # 最後3frameの軌道が同じ場合は、新しいほうを廃止する。
+                self.logger.debug(
+                    f"The path {p} merges with final_path {final_path[tail]} {tail=}."
+                )
+                dropped_paths.add(p)
+            else:
+                final_path[tail] = p
+
+        for tail, label in final_path.items():
+            self.logger.debug(
+                f"{label=} {tail=} {len(self.flowing_points[label].history)=}"
+            )
+
+        for p in dropped_paths:
+            del self.flowing_points[p]
+
         # 個々のpeakについて、
         # 追跡しているpeak(
         # の延長線上に極めて近い場所にあるなら、
@@ -166,7 +202,7 @@ class MotionDetector:
             self.logger.debug(
                 f"{p=}: {self.flowing_points[p].missed_duration=} {[h.xy for h in self.flowing_points[p].history]}"
             )
-        self.logger.info("")
+        self.logger.debug("")
         if plot:
             self.plot(matchscore, frame_index=frame_index)
 
