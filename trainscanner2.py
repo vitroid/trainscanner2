@@ -3,7 +3,7 @@ from logging import getLogger, INFO, basicConfig
 from trainscanner.video import video_loader_factory
 from trainscanner.image import linear_alpha
 from detect import MotionDetector
-from analize import analyze_iter
+from analyze import analyze_iter
 import numpy as np
 import cv2
 from tiledimage.cachedimage import CachedImage

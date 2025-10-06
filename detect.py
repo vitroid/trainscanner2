@@ -13,6 +13,9 @@ from dataclasses import dataclass
 
 
 def find_peaks(arr: np.ndarray, rect: Rect, height: float = 0.5):
+    """
+    周囲8点のいずれよりも値が大きい点を極値とし、その位置と値を返す。
+    """
     assert rect.width == arr.shape[1]
     assert rect.height == arr.shape[0]
     centers = arr[1:-1, 1:-1]
@@ -44,6 +47,12 @@ class HistoryItem:
 
 
 class Peak:
+    """
+    極大の位置と値を追跡する。欠測があってもカルマンフィルタが補う。
+    """
+
+    logger = getLogger(__name__)
+
     def __init__(self, xy, value):
         self.mean = np.array(xy)
         self.covariance = np.eye(2)
@@ -55,15 +64,18 @@ class Peak:
             initial_state_mean=self.mean,
             initial_state_covariance=self.covariance,
         )
+        # 連続する欠測の回数
         self.missed_duration = 0
+        # 実測値の履歴。
         self.history = [HistoryItem(xy=xy, value=value)]
 
+    # 予測し、結果は内部に保存する。
     def predict(self):
-        logger = getLogger(__name__)
         # logger.info(f"Predict from {self.mean=}")
         self.predicted = self.kf.transition_matrices @ self.mean
         return self.predicted
 
+    # 実測値を記録する。
     def update(self, xy, value, missed=False):
         new_mean, new_covariance = self.kf.filter_update(
             self.mean, self.covariance, observation=np.array(xy)
@@ -76,13 +88,14 @@ class Peak:
         else:
             self.missed_duration = 0
 
-    # 保留時間
+    # 欠測した場合の処理。予測値で補う。
     def missed(self, dummy_value):
         # 予測値でupdateする(?)
         xy = self.predicted
         self.update((int(xy[0]), int(xy[1])), value=dummy_value, missed=True)
         return self.missed_duration
 
+    # 軌道に一番近い点と、それとの距離を返す。
     def closest(self, xy):
         # 速度変動の許容範囲
         d = np.linalg.norm(self.predicted - xy, axis=1)
@@ -97,6 +110,7 @@ class MotionDetector:
         self.next_label = 0
 
     def detect_iter(self, iterator, plot: bool = False):
+        # iterator()からスコア行列をとりだし、pathをたどり、pathがとぎれたら鎖(移動ベクトルの列挙)を返す。
         for frame_index, matchscore in iterator():
             yield from self._detect(matchscore, frame_index=frame_index, plot=plot)
 
@@ -104,14 +118,23 @@ class MotionDetector:
         for p in self.flowing_points.keys():
             yield p, self.flowing_points[p].history
 
-    def _detect(self, matchscore: MatchScore, frame_index: int = None, plot=False):
+    def _detect(
+        self,
+        matchscore: MatchScore,
+        frame_index: int = None,
+        plot: bool = False,
+        max_miss: int = 5,
+        min_length: int = 10,
+        min_score: float = 0.3,
+        num_peaks: int = 3,
+        max_shake: float = 3,
+    ):
         # persistentに直前までのピーク位置の履歴が保存されていて、
         # それぞれの新しい位置をカルマンフィルタで予測する。
         for p in self.flowing_points.keys():
             self.flowing_points[p].predict()
 
-        # 高さが0.5以上の極大の位置を推定する。
-        # random_scores = np.random.random([5, 5])
+        # 高さが0.3以上の極大の位置を、スコアが大きい順に3つさがす。
         maxima_values = {
             (int(x), int(y)): value
             for x, y, value in sorted(
@@ -120,48 +143,59 @@ class MotionDetector:
                     Rect.from_bounds(
                         0, matchscore.value.shape[1], 0, matchscore.value.shape[0]
                     ),
-                    height=0.3,
+                    height=min_score,
                 ),
                 key=lambda x: x[2],
                 reverse=True,
-            )[:3]
+            )[:num_peaks]
         }
 
-        maxima = np.array(list(maxima_values.keys()))
-        self.logger.debug(f"{maxima=}")
+        maxima_list = np.array(list(maxima_values.keys()))
+        self.logger.debug(f"{maxima_list=}")
 
-        unassigned_maxima = set([tuple(xy) for xy in maxima])
+        unassigned_maxima = set([tuple(xy) for xy in maxima_list])
         missed_points = set(self.flowing_points.keys())
 
-        if len(maxima) > 0:
+        if len(maxima_list) > 0:
+            # 追跡中の各pathについて
             for p in self.flowing_points.keys():
-                xy, d = self.flowing_points[p].closest(maxima)
-                if xy is not None and d <= 3:
+                xy, d = self.flowing_points[p].closest(maxima_list)
+                # 一番近い極大がmax_shake以内にあれば (てぶれ等による多少のずれは許容する)
+                if xy is not None and d <= max_shake:
                     xy = tuple(xy)
+                    # pathを更新する。
                     self.flowing_points[p].update(
                         xy=xy, value=(frame_index, maxima_values[xy])
                     )
+                    # 極大は割当て済み
                     unassigned_maxima -= {xy}
+                    # パスも割当て済み
                     missed_points -= {p}
 
+        # まだ極大がみつかっていないパスについては、
         for p in missed_points:
+            # 予測値でごまかす
             missed_duration = self.flowing_points[p].missed(
                 dummy_value=(frame_index, 0)
             )
-            if missed_duration > 5:
+            # しかし連続でmax_miss回みのがした場合は、あきらめ、パスをyieldする処理に進む。
+            if missed_duration >= max_miss:
                 self.logger.debug(f"long missed {p=} {missed_duration=}")
-                # 長さ10フレーム以上のシーケンスに限定する。
-                if len(self.flowing_points[p].history) >= 10:
+                # 長さ10フレーム以上のシーケンスなら、
+                if len(self.flowing_points[p].history) >= min_length:
                     yield p, self.flowing_points[p].history
                 del self.flowing_points[p]
 
+        # 野良極大
         for xy in unassigned_maxima:
             xy = tuple(xy)
+            # 新しいパスを開始する
             self.flowing_points[self.next_label] = Peak(
                 xy=xy, value=(frame_index, maxima_values[xy])
             )
             self.next_label += 1
 
+        # パスの合流を監視する。
         path_labels = list(self.flowing_points.keys())
         self.logger.debug(f"{path_labels=}")
 
@@ -177,6 +211,7 @@ class MotionDetector:
                     for h in self.flowing_points[p].history[-3:]
                 ]
             )
+            # 2つのパスの間で、最後の3点の座標がまったく同じ場合は、パスが合流したとみなし、長い方(番号が若い方)を残し、短い方は抹消する。
             if tail in final_path:
                 # 最後3frameの軌道が同じ場合は、新しいほうを廃止する。
                 self.logger.debug(
@@ -191,13 +226,10 @@ class MotionDetector:
                 f"{label=} {tail=} {len(self.flowing_points[label].history)=}"
             )
 
+        # 廃止処理は別ループ
         for p in dropped_paths:
             del self.flowing_points[p]
 
-        # 個々のpeakについて、
-        # 追跡しているpeak(
-        # の延長線上に極めて近い場所にあるなら、
-        # それを
         for p in self.flowing_points.keys():
             self.logger.debug(
                 f"{p=}: {self.flowing_points[p].missed_duration=} {[h.xy for h in self.flowing_points[p].history]}"
