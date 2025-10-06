@@ -286,7 +286,7 @@ def analyze_iter(vl, scaling_ratio=1.0):
         unblurred_scaled_frames.append(unblurred_scaled_frame)
         unblurred_scaled_frame_history.append(unblurred_scaled_frame)
 
-        logger.info(f"{frame_index=} {delta=} {abs_loc=}")
+        logger.debug(f"{frame_index=} {delta=} {abs_loc=}")
         # framepositions[frame_index] = FramePosition(
         #     index=frame_index, train_velocity=None, absolute_location=abs_loc
         # )
@@ -329,7 +329,7 @@ def analyze_iter(vl, scaling_ratio=1.0):
         mask = blurmask.add_frame(diff)
 
         # maskは、diffの値が大きいピクセル。
-        logger.info(f"mask {np.min(mask)}, {np.max(mask)}")
+        logger.debug(f"mask {np.min(mask)}, {np.max(mask)}")
         mask += np.min(mask)
 
         # 平均背景をさしひいて、前景を強調する。
