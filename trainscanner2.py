@@ -7,17 +7,26 @@ from analyze import analyze_iter
 import numpy as np
 import cv2
 from tiledimage.cachedimage import CachedImage
+from tiledimage.simpleimage import SimpleImage
 
 scale = 1.0
 
-# DONE
-# てぶれ補正できてない。
 
-# 自動スケールがほしい。
+# 自動スケールがほしい。SimpleImageを拡張する。
+# どの絵を使うかの判断基準を再考する。
+# やはりstitch過程を見たいぞ。別threadにまかせればいい。
+# 毎ステップ、完全な照合を行うのではなく、10frameに一回照合を行い、あとは前後にpath追跡してつないでいくのはどうか。
+# 短いpathは見落すが問題ない。
+# あるいは、縮小画像で完全照合したあと、GUiで選んで完全解像度のものを再スキャンするか。
+# 縮小画像は30万pixel上限にする。それだな。
+# ただ、あまりに小さいと変位が見えなくなる。
+# 完全解像度の時は、縮小画像で推定したpathのそばだけ見ればいいので爆速。しかも、その時にスリットの設定などを行えばなおいい。
+
+# DONE
+# てぶれ補正
+# めっちゃ短いのにスコアがとても高いのは、たぶん背景なんだが、背景(0,0)をどの時点で排除するか。
 # 同一軌道へ収束している軌道は併合してよい。treeの解析がほしい。
 # なぜ平均スコアが0.3を大幅に下回る絵ができるのか=最後の0スコア点が平均を下げている?
-# めっちゃ短いのにスコアがとても高いのは、たぶん背景なんだが、背景(0,0)をどの時点で排除するか。
-# どの絵を使うかの判断基準を再考する。
 
 
 def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
@@ -70,7 +79,8 @@ def render(vl, frame_positions, history, id=0):
     scores = []
     first = True
 
-    with CachedImage(mode="new", dir=f"test{id}.pngs") as canvas:
+    # with CachedImage(mode="new", dir=f"test{id}.pngs") as canvas:
+    with SimpleImage() as canvas:
         for h in history:
             delta = h.xy
             frame_index, value = h.value
@@ -120,7 +130,7 @@ def main():
         for frame_index, absolute_position, matchscore in analyze_iter(
             vl, scaling_ratio=scale
         ):
-            logger.debug(f"{frame_index=} {absolute_position=}")
+            logger.info(f"{frame_index=} {absolute_position=}")
             frame_positions[frame_index] = absolute_position
             yield frame_index, matchscore
 
