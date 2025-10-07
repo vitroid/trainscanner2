@@ -10,6 +10,38 @@ import matplotlib.pyplot as plt
 from pyperbox import Rect
 import pykalman
 from dataclasses import dataclass
+from tiledimage.simpleimage import SimpleImage
+from trainscanner.image import linear_alpha
+import cv2
+
+
+def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
+    h, w = frame.shape[:2]
+    rh = int(abs(h * cosine) + abs(w * sine))
+    rw = int(abs(h * sine) + abs(w * cosine))
+    halfw, halfh = w / 2, h / 2
+    R = np.matrix(
+        (
+            (cosine, sine, -cosine * halfw - sine * halfh + rw / 2),
+            (-sine, cosine, sine * halfw - cosine * halfh + rh / 2),
+        )
+    )
+    alpha = linear_alpha(img_width=rw, mixing_width=20, slit_pos=0, head_right=True)
+    rotated = cv2.warpAffine(frame, R, (rw, rh))
+    # cv2.imshow("rotated", rotated)
+    # cv2.waitKey(0)
+    # 画像中心をそろえる
+    if first:
+        canvas.put_image(
+            (int(train_position) - rw // 2, -rh // 2),
+            rotated,
+        )
+    else:
+        canvas.put_image(
+            (int(train_position) - rw // 2, -rh // 2),
+            rotated,
+            linear_alpha=alpha,
+        )
 
 
 def find_peaks(arr: np.ndarray, rect: Rect, height: float = 0.5):
@@ -46,14 +78,15 @@ class HistoryItem:
     value: list
 
 
-class Peak:
+class Path:
     """
     極大の位置と値を追跡する。欠測があってもカルマンフィルタが補う。
     """
 
     logger = getLogger(__name__)
 
-    def __init__(self, xy, value):
+    def __init__(self, id, xy, value, frame=None):
+        self.id = id
         self.mean = np.array(xy)
         self.covariance = np.eye(2)
         self.kf = pykalman.KalmanFilter(
@@ -69,6 +102,12 @@ class Peak:
         # 実測値の履歴。
         self.history = [HistoryItem(xy=xy, value=value)]
 
+        # render()用
+        self.train_position = 0
+        self.canvas = SimpleImage()
+        self.frames = [frame]  # 最初の10フレームを保存しておく
+        self.first = True
+
     # 予測し、結果は内部に保存する。
     def predict(self):
         # logger.info(f"Predict from {self.mean=}")
@@ -76,7 +115,7 @@ class Peak:
         return self.predicted
 
     # 実測値を記録する。
-    def update(self, xy, value, missed=False):
+    def update(self, xy, value, missed=False, frame=None):
         new_mean, new_covariance = self.kf.filter_update(
             self.mean, self.covariance, observation=np.array(xy)
         )
@@ -87,12 +126,16 @@ class Peak:
             self.missed_duration += 1
         else:
             self.missed_duration = 0
+        if frame is not None:
+            self._render(frame)
 
     # 欠測した場合の処理。予測値で補う。
-    def missed(self, dummy_value):
+    def missed(self, dummy_value, frame=None):
         # 予測値でupdateする(?)
         xy = self.predicted
-        self.update((int(xy[0]), int(xy[1])), value=dummy_value, missed=True)
+        self.update(
+            (int(xy[0]), int(xy[1])), value=dummy_value, missed=True, frame=frame
+        )
         return self.missed_duration
 
     # 軌道に一番近い点と、それとの距離を返す。
@@ -101,22 +144,53 @@ class Peak:
         d = np.linalg.norm(self.predicted - xy, axis=1)
         return xy[np.argmin(d)], np.min(d)
 
+    def _render(self, frame):
+        if len(self.history) < 20:
+            self.frames.append(frame)
+            return
+        elif len(self.history) == 20:
+            for i in range(20 - 1):
+                self._render_one(self.history[i], self.frames[i])
+        h = self.history[-1]
+        self._render_one(h, frame)
+        img = self.canvas.get_image()
+        if img is not None:
+            cv2.imshow(f"{self.id}", img)
+            cv2.waitKey(1)
+
+    def _render_one(self, h: HistoryItem, frame: np.ndarray):
+        delta = h.xy
+        frame_index, value = h.value
+        self.logger.debug(f"{id=} {frame_index=} {delta=} ")
+        dx, dy = delta
+        dd = -((dx**2 + dy**2) ** 0.5)
+        if dd != 0:
+            self.train_position += dd
+            cosine = dx / dd
+            sine = dy / dd
+            rotated_placement(
+                self.canvas, frame, sine, cosine, self.train_position, self.first
+            )
+            self.first = False
+
 
 class MotionDetector:
     logger = getLogger(__name__)
 
     def __init__(self):
-        self.flowing_points = {}
+        self.paths = {}
         self.next_label = 0
 
     def detect_iter(self, iterator, plot: bool = False):
         # iterator()からスコア行列をとりだし、pathをたどり、pathがとぎれたら鎖(移動ベクトルの列挙)を返す。
-        for frame_index, matchscore in iterator():
-            yield from self._detect(matchscore, frame_index=frame_index, plot=plot)
+        for frame_index, matchscore, frame in iterator():
+            yield from self._detect(
+                matchscore, frame_index=frame_index, plot=plot, frame=frame
+            )
 
         # 最後まで生きのこったpathをpurgeする。
-        for p in self.flowing_points.keys():
-            yield p, self.flowing_points[p].history
+        for path in self.paths.keys():
+            yield path, self.paths[path].history
 
     def _detect(
         self,
@@ -128,11 +202,12 @@ class MotionDetector:
         min_score: float = 0.3,
         num_peaks: int = 3,
         max_shake: float = 3,
+        frame: np.ndarray = None,
     ):
-        # persistentに直前までのピーク位置の履歴が保存されていて、
+        # self.pathsに直前までのピーク位置の履歴が保存されていて、
         # それぞれの新しい位置をカルマンフィルタで予測する。
-        for p in self.flowing_points.keys():
-            self.flowing_points[p].predict()
+        for path in self.paths.values():
+            path.predict()
 
         # 高さが0.3以上の極大の位置を、スコアが大きい順に3つさがす。
         maxima_values = {
@@ -154,85 +229,83 @@ class MotionDetector:
         self.logger.debug(f"{maxima_list=}")
 
         unassigned_maxima = set([tuple(xy) for xy in maxima_list])
-        missed_points = set(self.flowing_points.keys())
+        missed_paths = set(self.paths.keys())
 
         if len(maxima_list) > 0:
             # 追跡中の各pathについて
-            for p in self.flowing_points.keys():
-                xy, d = self.flowing_points[p].closest(maxima_list)
+            for path in self.paths.keys():
+                xy, d = self.paths[path].closest(maxima_list)
                 # 一番近い極大がmax_shake以内にあれば (てぶれ等による多少のずれは許容する)
                 if xy is not None and d <= max_shake:
                     xy = tuple(xy)
                     # pathを更新する。
-                    self.flowing_points[p].update(
-                        xy=xy, value=(frame_index, maxima_values[xy])
+                    self.paths[path].update(
+                        xy=xy, value=(frame_index, maxima_values[xy]), frame=frame
                     )
                     # 極大は割当て済み
                     unassigned_maxima -= {xy}
                     # パスも割当て済み
-                    missed_points -= {p}
+                    missed_paths -= {path}
 
         # まだ極大がみつかっていないパスについては、
-        for p in missed_points:
+        for path in missed_paths:
             # 予測値でごまかす
-            missed_duration = self.flowing_points[p].missed(
-                dummy_value=(frame_index, 0)
+            missed_duration = self.paths[path].missed(
+                dummy_value=(frame_index, 0), frame=frame
             )
             # しかし連続でmax_miss回みのがした場合は、あきらめ、パスをyieldする処理に進む。
             if missed_duration >= max_miss:
-                self.logger.debug(f"long missed {p=} {missed_duration=}")
+                self.logger.debug(f"long missed {path=} {missed_duration=}")
                 # 長さ10フレーム以上のシーケンスなら、
-                if len(self.flowing_points[p].history) >= min_length:
-                    yield p, self.flowing_points[p].history
-                del self.flowing_points[p]
+                if len(self.paths[path].history) >= min_length:
+                    yield path, self.paths[path].history
+                del self.paths[path]
 
         # 野良極大
         for xy in unassigned_maxima:
             xy = tuple(xy)
             # 新しいパスを開始する
-            self.flowing_points[self.next_label] = Peak(
-                xy=xy, value=(frame_index, maxima_values[xy])
+            self.paths[self.next_label] = Path(
+                xy=xy,
+                value=(frame_index, maxima_values[xy]),
+                frame=frame,
+                id=self.next_label,
             )
             self.next_label += 1
 
         # パスの合流を監視する。
-        path_labels = list(self.flowing_points.keys())
+        path_labels = list(self.paths.keys())
         self.logger.debug(f"{path_labels=}")
 
         final_path = dict()
         dropped_paths = set()
 
-        for p in path_labels:
-            if len(self.flowing_points[p].history) < 3:
+        for path in path_labels:
+            if len(self.paths[path].history) < 3:
                 continue
             tail = tuple(
-                [
-                    (int(h.xy[0]), int(h.xy[1]))
-                    for h in self.flowing_points[p].history[-3:]
-                ]
+                [(int(h.xy[0]), int(h.xy[1])) for h in self.paths[path].history[-3:]]
             )
             # 2つのパスの間で、最後の3点の座標がまったく同じ場合は、パスが合流したとみなし、長い方(番号が若い方)を残し、短い方は抹消する。
             if tail in final_path:
                 # 最後3frameの軌道が同じ場合は、新しいほうを廃止する。
                 self.logger.debug(
-                    f"The path {p} merges with final_path {final_path[tail]} {tail=}."
+                    f"The path {path} merges with final_path {final_path[tail]} {tail=}."
                 )
-                dropped_paths.add(p)
+                dropped_paths.add(path)
             else:
-                final_path[tail] = p
+                final_path[tail] = path
 
         for tail, label in final_path.items():
-            self.logger.debug(
-                f"{label=} {tail=} {len(self.flowing_points[label].history)=}"
-            )
+            self.logger.debug(f"{label=} {tail=} {len(self.paths[label].history)=}")
 
         # 廃止処理は別ループ
-        for p in dropped_paths:
-            del self.flowing_points[p]
+        for path in dropped_paths:
+            del self.paths[path]
 
-        for p in self.flowing_points.keys():
+        for path in self.paths.keys():
             self.logger.debug(
-                f"{p=}: {self.flowing_points[p].missed_duration=} {[h.xy for h in self.flowing_points[p].history]}"
+                f"{path=}: {self.paths[path].missed_duration=} {[h.xy for h in self.paths[path].history]}"
             )
         self.logger.debug("")
         if plot:

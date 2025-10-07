@@ -225,7 +225,7 @@ def analyze_iter(vl, scaling_ratio=1.0):
         )
 
         # video frame index, absolute location of the frame, matchscore
-        yield frame_index, abs_loc, matchscore
+        yield frame_index, abs_loc, matchscore, unblurred_scaled_frame
 
 
 def main():
