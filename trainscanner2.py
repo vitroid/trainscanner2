@@ -8,21 +8,16 @@ import numpy as np
 import cv2
 from tiledimage.cachedimage import CachedImage
 from tiledimage.simpleimage import SimpleImage
+from render import Render
 
-
-# 自動スケールがほしい。SimpleImageを拡張する。
-# どの絵を使うかの判断基準を再考する。
-# やはりstitch過程を見たいぞ。別threadにまかせればいい。
-# 毎ステップ、完全な照合を行うのではなく、10frameに一回照合を行い、あとは前後にpath追跡してつないでいくのはどうか。
-# 短いpathは見落すが問題ない。
-# あるいは、縮小画像で完全照合したあと、GUiで選んで完全解像度のものを再スキャンするか。
+# 縮小画像で照合したあと、GUiで選んで完全解像度のものを再スキャンするか。
 # 縮小画像は30万pixel上限にする。それだな。
 # ただ、あまりに小さいと変位が見えなくなる。
 # 完全解像度の時は、縮小画像で推定したpathのそばだけ見ればいいので爆速。しかも、その時にスリットの設定などを行えばなおいい。
 
-# 途中経過を表示する場合にも、scoreによる足切りは必要。
-# それを実装するには、path間の情報交換が必要になる。ちょっと難しい。逐次レンダラーはPathではないオブジェクトにまかせたい。
-# 逐次レンダラーを使うのであれば、iteratorの設計指針はもっと変わる。
+# Rendererウィンドウに、捨てる/中止ボタン、保存するボタン、最高解像度で再レンダリングするボタンを準備する。
+# 最高解像度でのレンダリングはたぶん別プログラムになるだろう。
+# そいつには、historyとscaleを渡す。誤差の範囲で最高の照合をさせる。
 
 # DONE
 # てぶれ補正
@@ -49,6 +44,8 @@ def main():
 
     frame_positions = dict()
 
+    renderer = Render()
+
     def iterator():
         for frame_index, absolute_position, matchscore, scaled_frame in analyze_iter(
             vl, scaling_ratio=scale
@@ -59,16 +56,15 @@ def main():
 
     motiondetector = MotionDetector()
     best_score = 0.0
-    for p_index, history in motiondetector.detect_iter(iterator, plot=False):
-        # re-open the video
-        # vl = video_loader_factory(videofile)
-        # avg_score = np.mean([h.value[1] for h in history])
-        # if best_score * 0.8 < avg_score:
-        #     if best_score < avg_score:
-        #         best_score = avg_score
-        #     render(vl, frame_positions, history, id=p_index, scale=scale)
-        # storer.append(frame_index, absolute_position, matchscore)
-        pass
+    # def detect_iter(self, iterator, plot: bool = False):
+    # iterator()からスコア行列をとりだし、pathをたどり、pathがとぎれたら鎖(移動ベクトルの列挙)を返す。
+    for frame_index, matchscore, frame in iterator():
+        paths = motiondetector._detect(matchscore, frame_index=frame_index)
+
+        for id, path in paths.items():
+            renderer.put(id, frame, path.history[-1])
+
+    motiondetector.done()
 
 
 if __name__ == "__main__":
