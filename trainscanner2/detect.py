@@ -128,8 +128,22 @@ class MotionDetector:
             path.predict()
 
         # 高さが0.3以上の極大の位置を、スコアが大きい順に3つさがす。
-        maxima_values = {
-            (int(x), int(y)): value
+        # maxima_values = {
+        #     (int(x), int(y)): value
+        #     for x, y, value in sorted(
+        #         find_peaks(
+        #             matchscore.value,
+        #             Rect.from_bounds(
+        #                 0, matchscore.value.shape[1], 0, matchscore.value.shape[0]
+        #             ),
+        #             height=min_score,
+        #         ),
+        #         key=lambda x: x[2],
+        #         reverse=True,
+        #     )[:num_peaks]
+        # }
+        maxima = [
+            (int(x), int(y), value)
             for x, y, value in sorted(
                 find_peaks(
                     matchscore.value,
@@ -140,8 +154,11 @@ class MotionDetector:
                 ),
                 key=lambda x: x[2],
                 reverse=True,
-            )[:num_peaks]
-        }
+            )
+            if int(x) != 0 or int(y) != 0
+        ][:3]
+
+        maxima_values = {(x, y): value for x, y, value in maxima}
 
         maxima_list = np.array(list(maxima_values.keys()))
         self.logger.debug(f"{maxima_list=}")
@@ -204,7 +221,7 @@ class MotionDetector:
             # 2つのパスの間で、最後の3点の座標がまったく同じ場合は、パスが合流したとみなし、長い方(番号が若い方)を残し、短い方は抹消する。
             if tail in final_path:
                 # 最後3frameの軌道が同じ場合は、新しいほうを廃止する。
-                self.logger.debug(
+                self.logger.info(
                     f"The path {path} merges with final_path {final_path[tail]} {tail=}."
                 )
                 dropped_paths.add(path)
@@ -226,7 +243,7 @@ class MotionDetector:
         if plot:
             self.plot(matchscore, frame_index=frame_index)
 
-        return {id: self.paths[id] for id in final_path.values()}
+        return {id: self.paths[id] for id in final_path.values()}, dropped_paths
 
     def plot(self, matchscore: MatchScore, frame_index: int = None):
         # とりあえず、matchscore.valueを2次元の等高線で表示したい。

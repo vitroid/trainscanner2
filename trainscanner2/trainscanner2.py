@@ -34,12 +34,12 @@ def main():
     if len(sys.argv) < 2:
         videofile = "examples/sample3.mov"
         videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/他人の動画/antishake test/Untitled.mp4"
-        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/Czech Trams/00205/00205.MTS"
+        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Czech Trams/00205/00205.MTS"
     else:
         videofile = sys.argv[1]
     vl = video_loader_factory(videofile)
     frame = vl.next()
-    scale = (512 * 512 / (frame.shape[0] * frame.shape[1])) ** 0.5
+    scale = (300 * 300 / (frame.shape[0] * frame.shape[1])) ** 0.5
     if scale > 1.0:
         scale = 1.0
 
@@ -60,10 +60,14 @@ def main():
     # def detect_iter(self, iterator, plot: bool = False):
     # iterator()からスコア行列をとりだし、pathをたどり、pathがとぎれたら鎖(移動ベクトルの列挙)を返す。
     for frame_index, matchscore, frame in iterator():
-        paths = motiondetector._detect(matchscore, frame_index=frame_index)
+        paths, dropped_paths = motiondetector._detect(
+            matchscore, frame_index=frame_index
+        )
 
         for id, path in paths.items():
             renderer.put(id, frame, path.history[-1])
+        for path in dropped_paths:
+            renderer.done(path)
 
     motiondetector.done()
 

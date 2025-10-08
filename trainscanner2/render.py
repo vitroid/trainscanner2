@@ -51,6 +51,11 @@ class Render_one:
         self.train_position = 0
         self.alive = True
 
+    def done(self):
+        self.alive = False
+        cv2.destroyWindow(f"{self.id}")
+        cv2.waitKey(1)
+
     def _render_one(
         self,
         frame: np.ndarray,
@@ -73,28 +78,43 @@ class Render_one:
     def put(self, frame: np.ndarray, pathitem: PathItem, quality_threshold=0.0):
         if not self.alive:
             return
-        if self.leading_frames.filled:
-            if 0 < self.quality < quality_threshold:
+        self.history.append(pathitem)
+        self.leading_frames.append(frame)
+        if len(self.history) > 20:
+            if 0 < self.quality < quality_threshold:  # or abs(self.train_position) < 3:
                 # close the window
-                cv2.destroyWindow(f"{self.id}")
-                self.alive = False
+                self.logger.info(
+                    f"Close {self.id=} {self.quality=} {quality_threshold=} {self.train_position=}"
+                )
+                # self.logger.info(f"{0 < self.quality < quality_threshold}")
+                # self.logger.info(f"{self.train_position}")
+                # self.logger.info(self.history)
+                self.done()
+                return
+
             self._render_one(frame, pathitem)
             img = self.canvas.get_image()
             if img is not None:
+                cv2.putText(
+                    img,
+                    f"{self.quality}",
+                    (10, 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    2,
+                )
                 cv2.imshow(f"{self.id}", img)
                 cv2.waitKey(1)
-        else:
-            self.history.append(pathitem)
-            self.leading_frames.append(frame)
-            if self.leading_frames.filled:
-                for f, pi in zip(self.leading_frames.queue, self.history):
-                    self._render_one(f, pi)
+        elif len(self.history) == 20:
+            for f, pi in zip(self.leading_frames.queue, self.history):
+                self._render_one(f, pi)
 
     @property
     def quality(self):
         # 最初の20フレームで判別する。
         if len(self.history) > 20:
-            return np.mean([h.value for h in self.history])
+            return np.mean([h.value[1] for h in self.history])
         return 0.0
 
 
@@ -119,7 +139,12 @@ class Render:
         else:
             r = Render_one(id, num_leading_frames=20)
             self.renderers[id] = r
-        r.put(frame, historyitem, quality_threshold=self.max_quality * 0.8)
+        r.put(frame, historyitem, quality_threshold=self.max_quality * 0.5)
         q = r.quality
         if self.max_quality < q:
             self.max_quality = q
+
+    def done(self, id):
+        if id in self.renderers:
+            r = self.renderers[id]
+            r.done()

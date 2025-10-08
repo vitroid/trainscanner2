@@ -32,7 +32,7 @@ class AntiShaker2:
         h, w = frame.shape[:2]
         frame_std = standardize(frame)
 
-        if self._last_frame is None:
+        if self._last_frame is None or self._velocity == 0:
             self._last_frame = frame_std.copy()
             return frame, (0, 0), (0, 0)
 

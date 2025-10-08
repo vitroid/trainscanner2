@@ -72,7 +72,7 @@ def analyze_iter(vl, scaling_ratio=1.0):
     blurmask = BlurMask(lifetime=20)
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
-    antishaker = AntiShaker2(velocity=3)
+    antishaker = AntiShaker2(velocity=1)
 
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()
