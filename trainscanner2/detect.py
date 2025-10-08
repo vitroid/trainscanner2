@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pyperbox import Rect
 import pykalman
-from render import PathItem
+from trainscanner2 import PathItem
 
 
 def find_peaks(arr: np.ndarray, rect: Rect, height: float = 0.5):

@@ -5,23 +5,12 @@ from logging import getLogger, DEBUG, basicConfig
 import json
 
 # from sklearn.mixture import GaussianMixture
-from antishake import AntiShaker2
+from trainscanner2.antishake import AntiShaker2
 from trainscanner.image import match, standardize
 from tiffeditor import Rect
 from trainscanner.video import video_loader_factory
 from trainscanner.image import MatchScore
-
-# from dataclasses import dataclass
-
-
-# @dataclass
-# class FramePosition:
-#     index: int
-#     train_velocity: tuple[float, float]
-#     absolute_location: tuple[float, float]  # of the frame
-
-
-# 残像マスク
+from trainscanner2 import FIFO
 
 
 # フレーム間の二乗差分を時間平均して、動きの大きい部分を抽出する。
@@ -73,28 +62,6 @@ def normalize(x):
 #     return alpha
 
 
-class FIFO:
-    def __init__(self, maxlen: int):
-        self.queue = []
-        self.maxlen = maxlen
-
-    def append(self, item):
-        self.queue.append(item)
-        if len(self.queue) > self.maxlen:
-            self.queue.pop(0)
-
-    def fluctuation(self):
-        return max(self.queue) - min(self.queue)
-
-    @property
-    def length(self):
-        return len(self.queue)
-
-    @property
-    def filled(self):
-        return len(self.queue) == self.maxlen
-
-
 def analyze_iter(vl, scaling_ratio=1.0):
     """
     動画を読み込んで、各フレームをずらして自分自身と重ねあわせ、そのスコア(2次元行列)を返す。
@@ -105,7 +72,7 @@ def analyze_iter(vl, scaling_ratio=1.0):
     blurmask = BlurMask(lifetime=20)
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
-    antishaker = AntiShaker2(velocity=1)
+    antishaker = AntiShaker2(velocity=3)
 
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()

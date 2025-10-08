@@ -1,37 +1,9 @@
 import numpy as np
-from dataclasses import dataclass
 from tiledimage.simpleimage import SimpleImage
 from trainscanner.image import linear_alpha
 import cv2
 from logging import getLogger
-
-
-@dataclass
-class PathItem:
-    xy: tuple[int, int]
-    value: list
-
-
-class FIFO:
-    def __init__(self, maxlen: int):
-        self.queue = []
-        self.maxlen = maxlen
-
-    def append(self, item):
-        self.queue.append(item)
-        if len(self.queue) > self.maxlen:
-            self.queue.pop(0)
-
-    def fluctuation(self):
-        return max(self.queue) - min(self.queue)
-
-    @property
-    def length(self):
-        return len(self.queue)
-
-    @property
-    def filled(self):
-        return len(self.queue) == self.maxlen
+from trainscanner2 import FIFO, PathItem
 
 
 def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):

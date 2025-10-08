@@ -62,15 +62,21 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         videofile = "examples/sample3.mov"
         videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/他人の動画/antishake test/Untitled.mp4"
+        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/Czech Trams/00205/00205.MTS"
     else:
         videofile = sys.argv[1]
     cap = cv2.VideoCapture(videofile)
+    _, frame = cap.read()
+    height, width = frame.shape[:2]
+    scaling_ratio = (512 * 512 / (width * height)) ** 0.5
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
+        frame = cv2.resize(frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
         frame, delta, abs_loc = antishaker.add_frame(
             frame, np.ones(frame.shape[:2], dtype=np.float32)
         )
         cv2.imshow("frame", frame)
-        cv2.waitKey(0)
+        cv2.waitKey(1)

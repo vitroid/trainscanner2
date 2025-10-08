@@ -1,19 +1,20 @@
 import sys
 from logging import getLogger, INFO, basicConfig
 from trainscanner.video import video_loader_factory
-from trainscanner.image import linear_alpha
-from detect import MotionDetector
-from analyze import analyze_iter
-import numpy as np
-import cv2
-from tiledimage.cachedimage import CachedImage
-from tiledimage.simpleimage import SimpleImage
-from render import Render
+from trainscanner2.detect import MotionDetector
+from trainscanner2.analyze import analyze_iter
+from trainscanner2.render import Render
 
 # 縮小画像で照合したあと、GUiで選んで完全解像度のものを再スキャンするか。
 # 縮小画像は30万pixel上限にする。それだな。
 # ただ、あまりに小さいと変位が見えなくなる。
 # 完全解像度の時は、縮小画像で推定したpathのそばだけ見ればいいので爆速。しかも、その時にスリットの設定などを行えばなおいい。
+
+# quality至上主義にすると、同じ動画のなかに異なる品質のものがあった時に見逃す可能性がある。
+# 時刻時刻での最良品質に対して比較するのが良い。
+# あと、カメラのてぶれの許容範囲はもうちょっと大きくてもいいだろう。
+# 00205.MTSからどれだけ成功を抽出できるかを評価基準にする。→205の場合は極端にカメラが動くので、antishakeを切ったほうがまし。参考にならない。
+
 
 # Rendererウィンドウに、捨てる/中止ボタン、保存するボタン、最高解像度で再レンダリングするボタンを準備する。
 # 最高解像度でのレンダリングはたぶん別プログラムになるだろう。
@@ -33,7 +34,7 @@ def main():
     if len(sys.argv) < 2:
         videofile = "examples/sample3.mov"
         videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/他人の動画/antishake test/Untitled.mp4"
-
+        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/Czech Trams/00205/00205.MTS"
     else:
         videofile = sys.argv[1]
     vl = video_loader_factory(videofile)
