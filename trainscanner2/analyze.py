@@ -43,25 +43,6 @@ def normalize(x):
     return (x - np.min(x)) / (np.max(x) - np.min(x))
 
 
-# def alpha_mask(size, delta, width=20):
-#     # 実際にはalphaを傾ける必要はなかった。
-#     # 画像のほうを回すべきだった。
-#     w, h = size
-#     dx, dy = delta
-#     L = (dx**2 + dy**2) ** 0.5
-#     dx /= L
-#     dy /= L
-#     # 原点を通る平面。z = A x + B y
-#     # (0、0、0)と(dx, dy, 1/w)を通るようにしたい。ただし1=dx^2+dy^2
-#     # dx/A + dy/B = L/w
-#     X, Y = np.meshgrid(np.arange(w), np.arange(h))
-#     alpha = ((X - w / 2) * dx + (Y - h / 2) * dy) / width
-#     print(alpha[int(dy * width) + h // 2, int(dx * width) + w // 2])
-#     alpha[alpha > 1] = 1
-#     alpha[alpha < 0] = 0
-#     return alpha
-
-
 def analyze_iter(vl, scaling_ratio=1.0):
     """
     動画を読み込んで、各フレームをずらして自分自身と重ねあわせ、そのスコア(2次元行列)を返す。

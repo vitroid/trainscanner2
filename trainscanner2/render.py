@@ -1,6 +1,7 @@
 import numpy as np
 from tiledimage.simpleimage import SimpleImage
 from trainscanner.image import linear_alpha
+from trainscanner2.imagecomb import ImageComb
 import cv2
 from logging import getLogger
 from trainscanner2 import FIFO, PathItem
@@ -8,6 +9,7 @@ import sys
 import time
 import os
 import json
+from pyperbox import Rect
 
 # PyQt6のインポートを試みる（インストールされていない場合はNoneに）
 try:
@@ -170,7 +172,7 @@ if PYQT6_AVAILABLE:
                 self.image_label.repaint()
                 QApplication.processEvents()
                 # 画像の左端（最新部分）を表示
-                QTimer.singleShot(10, self._scroll_to_left)
+                # QTimer.singleShot(10, self._scroll_to_left)
 
         def _scroll_to_left(self):
             """スクロールバーを左端に移動（画像の最新部分を表示）"""
@@ -297,22 +299,27 @@ def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
             (-sine, cosine, sine * halfw - cosine * halfh + rh / 2),
         )
     )
-    alpha = linear_alpha(img_width=rw, mixing_width=20, slit_pos=0, head_right=True)
+    alpha = linear_alpha(img_width=rw, mixing_width=20, slit_pos=0, head_right=False)
     rotated = cv2.warpAffine(frame, R, (rw, rh))
     # cv2.imshow("rotated", rotated)
     # cv2.waitKey(0)
     # 画像中心をそろえる
-    if first:
-        canvas.put_image(
-            (int(train_position) - rw // 2, -rh // 2),
-            rotated,
-        )
-    else:
-        canvas.put_image(
-            (int(train_position) - rw // 2, -rh // 2),
-            rotated,
-            linear_alpha=alpha,
-        )
+    # if first:
+    canvas.put_image(
+        Rect.from_bounds(
+            left=int(train_position) - rw // 2,
+            right=int(train_position) - rw // 2 + rw,
+            top=-rh // 2,
+            bottom=-rh // 2 + rh,
+        ),
+        rotated,
+    )
+    # else:
+    #     canvas.put_image(
+    #         (int(train_position) - rw // 2, -rh // 2),
+    #         rotated,
+    #         linear_alpha=alpha,
+    #     )
 
 
 class Render_one:
@@ -333,8 +340,9 @@ class Render_one:
         self.leading_frames = FIFO(num_leading_frames)
         self.history = []  # PathItemのリスト
         self.abs_positions = []  # 各フレームのabsolute_position（手ぶれ補正）
+        self.train_positions = []  # 各フレームでのtrain_position（再計算不要に）
         self.id = id
-        self.canvas = SimpleImage()
+        self.canvas = ImageComb()
         self.first = False
         self.train_position = 0
         self.alive = True
@@ -363,15 +371,20 @@ class Render_one:
         frame_index, value = h.value
         self.logger.debug(f"{id=} {frame_index=} {delta=} ")
         dx, dy = delta
-        dd = -((dx**2 + dy**2) ** 0.5)
+        dd = (dx**2 + dy**2) ** 0.5
         if dd != 0:
             self.train_position += dd
+            # 各フレームでの位置を記録（export_history()で使用）
+            self.train_positions.append(self.train_position)
             cosine = dx / dd
             sine = dy / dd
             rotated_placement(
                 self.canvas, frame, sine, cosine, self.train_position, self.first
             )
             self.first = False
+        else:
+            # dd=0の場合も位置を記録（前のフレームと同じ位置）
+            self.train_positions.append(self.train_position)
 
     def put(
         self,
@@ -477,20 +490,22 @@ class Render_one:
                     * train_position: そのフレームでのキャンバス位置
                     * abs_pos_x, abs_pos_y: 手ぶれによる背景移動量
         """
-        # train_positionを逆算（最終位置から各フレームの位置を計算）
-        current_pos = 0
+        # 【重要】train_positionは再計算せず、_render_one()で記録した値を使う
+        # これにより、コードの重複を避け、計算ミスを防ぐ
         history_data = []
 
         for idx, h in enumerate(self.history):
             frame_index, match_score = h.value
             delta_x, delta_y = h.xy
-            dd = -((delta_x**2 + delta_y**2) ** 0.5)
-            if dd != 0:
-                current_pos += dd
 
             # absolute_positionを取得（保存されていれば）
             abs_pos = (
                 self.abs_positions[idx] if idx < len(self.abs_positions) else (0, 0)
+            )
+
+            # train_positionを取得（_render_one()で記録済み）
+            train_pos = (
+                self.train_positions[idx] if idx < len(self.train_positions) else 0.0
             )
 
             history_data.append(
@@ -499,7 +514,7 @@ class Render_one:
                     "match_score": float(match_score),
                     "delta_x": float(delta_x),
                     "delta_y": float(delta_y),
-                    "train_position": float(current_pos),
+                    "train_position": float(train_pos),
                     "abs_pos_x": float(abs_pos[0]),
                     "abs_pos_y": float(abs_pos[1]),
                 }
