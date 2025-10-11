@@ -72,9 +72,9 @@ def main():
 
     motiondetector.done()
 
-    # 処理完了後、低品質ウィンドウを自動で閉じる
-    logger.info("Processing complete. Closing low-quality windows...")
-    renderer.close_low_quality_windows(quality_ratio=0.5)
+    # 処理完了後、低品質ウィンドウを最終確認（処理中も随時閉じられている）
+    logger.info("Processing complete. Final check for low-quality windows...")
+    renderer.close_low_quality_windows(quality_ratio=0.75)
 
     # PyQt6ウィンドウが全て閉じられるまで待機
     logger.info("Close remaining windows to exit.")

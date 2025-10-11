@@ -7,6 +7,7 @@ from trainscanner2 import FIFO, PathItem
 import sys
 import time
 import os
+import json
 
 # PyQt6のインポートを試みる（インストールされていない場合はNoneに）
 try:
@@ -519,12 +520,23 @@ class Render:
     """
     極値とフレームをうけとり、個別のレンダラーに差配する。
     生きているrendererの最高品質を調査し、低品質rendererの打ち切り指示をする
+
+    【Path管理の仕組み】
+    - self.renderers = {id: Render_one}  # 全てのPathを管理
+    - Render_one.alive フラグで状態を管理:
+      * alive=True:  処理中（新しいフレームデータを受け入れる）
+      * alive=False: 処理完了（ウィンドウは残るが、データは受け入れない）
+
+    【Pathの削除タイミング】
+    1. 品質が閾値以下になったとき (done())
+    2. ユーザーがウィンドウを閉じたとき (remove_renderer())
+    3. 処理完了後に低品質Pathを一括削除 (close_low_quality_windows())
     """
 
     logger = getLogger(__name__)
 
     def __init__(self, use_pyqt=True, video_path: str = None):
-        self.renderers = {}
+        self.renderers = {}  # {id: Render_one} 全Path（active/finished両方）
         self.max_quality = 0.0
         self.window_manager = None
 
@@ -571,10 +583,13 @@ class Render:
             )
             self.renderers[id] = r
 
-        r.put(frame, historyitem, quality_threshold=self.max_quality * 0.5)
+        r.put(frame, historyitem, quality_threshold=self.max_quality * 0.75)
         q = r.quality
+        # 最高品質が更新されたら、低品質ウィンドウをチェックして閉じる
         if self.max_quality < q:
             self.max_quality = q
+            # 閾値が上がったので、低品質ウィンドウを閉じる
+            self._check_and_close_low_quality_windows()
 
     def done(self, id):
         """
@@ -606,46 +621,118 @@ class Render:
             del self.renderers[id]
             self.logger.info(f"Removed renderer {id}")
 
-    def close_low_quality_windows(self, quality_ratio: float = 0.5):
+    def get_active_paths(self):
         """
-        処理完了後に品質が閾値以下のウィンドウを自動で閉じる
+        処理中のPath（alive=True）のみを返す
+
+        【用途】
+        - まだフレームデータを受け入れているPathを確認
+        - 統計情報の取得
+
+        Returns:
+            dict: {id: Render_one} 処理中のPathの辞書
+        """
+        return {id: r for id, r in self.renderers.items() if r.alive}
+
+    def get_finished_paths(self):
+        """
+        処理が完了したPath（alive=False）のみを返す
+
+        【用途】
+        - ウィンドウは残っているが処理は終了したPathを確認
+        - PyQt6ウィンドウで保存待ちのPathを取得
+
+        Returns:
+            dict: {id: Render_one} 処理完了したPathの辞書
+        """
+        return {id: r for id, r in self.renderers.items() if not r.alive}
+
+    def get_path_stats(self):
+        """
+        Path管理の統計情報を返す
+
+        Returns:
+            dict: 統計情報
+                - total: 総Path数
+                - active: 処理中のPath数
+                - finished: 処理完了Path数
+                - max_quality: 最高品質
+        """
+        active = self.get_active_paths()
+        finished = self.get_finished_paths()
+        return {
+            "total": len(self.renderers),
+            "active": len(active),
+            "finished": len(finished),
+            "max_quality": self.max_quality,
+        }
+
+    def _check_and_close_low_quality_windows(self, quality_ratio: float = 0.5):
+        """
+        低品質ウィンドウをチェックして閉じる（処理中に随時実行）
 
         【目的】
-        - 40個のウィンドウが開くと管理が大変
-        - 低品質なものは自動で閉じて、高品質なものだけを表示
+        - 最高品質が更新されるたびに、閾値以下のウィンドウを閉じる
+        - ウィンドウが無限に増え続けないようにする
 
-        【動作】
-        1. 最高品質 × quality_ratio を閾値とする
-        2. 閾値以下のウィンドウを閉じる
-        3. 同時にPathも削除（メモリ解放）
+        【呼ばれるタイミング】
+        - Render.put()でmax_qualityが更新されたとき
 
         Args:
             quality_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
         """
-        if not self.renderers:
+        if not self.renderers or self.max_quality == 0:
             return
 
         threshold = self.max_quality * quality_ratio
-        closed_count = 0
+        to_close = []
 
-        for id, renderer in list(self.renderers.items()):
+        # 閉じるウィンドウをリストアップ
+        for id, renderer in self.renderers.items():
+            # 品質が計算されていて（quality > 0）、かつ閾値以下
             if renderer.quality > 0 and renderer.quality < threshold:
-                self.logger.info(
-                    f"Auto-closing window {id}: quality={renderer.quality:.3f} < threshold={threshold:.3f}"
-                )
-                if self.window_manager:
-                    self.window_manager.close_window(id)
-                else:
-                    cv2.destroyWindow(f"{id}")
-                    cv2.waitKey(1)
-                # Pathを削除（メモリ解放）
-                del self.renderers[id]
-                closed_count += 1
+                to_close.append(id)
 
-        if closed_count > 0:
+        # ウィンドウを閉じてPathを削除
+        for id in to_close:
+            # closeEventで既に削除されている可能性があるのでチェック
+            if id not in self.renderers:
+                continue
+
+            renderer = self.renderers[id]
             self.logger.info(
-                f"Closed {closed_count} low-quality windows, removed their paths"
+                f"Auto-closing window {id}: quality={renderer.quality:.3f} < threshold={threshold:.3f}"
             )
+            if self.window_manager:
+                # PyQt6の場合: close()を呼ぶとcloseEventが発火して自動的に削除される
+                self.window_manager.close_window(id)
+                # closeEventでremove_renderer()が呼ばれるので、ここでは削除しない
+            else:
+                # OpenCVの場合: 手動でウィンドウを閉じて削除
+                cv2.destroyWindow(f"{id}")
+                cv2.waitKey(1)
+                # Pathを削除
+                if id in self.renderers:
+                    del self.renderers[id]
+
+        if to_close:
+            self.logger.info(
+                f"Closed {len(to_close)} low-quality windows during processing"
+            )
+
+    def close_low_quality_windows(self, quality_ratio: float = 0.5):
+        """
+        処理完了後に品質が閾値以下のウィンドウを自動で閉じる（互換性のため）
+
+        【注意】
+        - このメソッドは処理完了後に明示的に呼ぶ用
+        - 実際には、処理中も随時_check_and_close_low_quality_windows()が呼ばれている
+        - このメソッドは最終確認として呼ばれる
+
+        Args:
+            quality_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
+        """
+        self._check_and_close_low_quality_windows(quality_ratio)
 
     def close_all(self):
         """すべてのウィンドウを閉じる"""
