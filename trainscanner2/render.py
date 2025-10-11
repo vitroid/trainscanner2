@@ -206,6 +206,7 @@ if PYQT6_AVAILABLE:
             【.tspos2ファイル形式例】
             {
               "id": 28,
+              "video_path": "/path/to/video.mp4",
               "train_position": 1234.5,
               "quality": 0.856,
               "scaling_factor": 0.5,
@@ -215,16 +216,27 @@ if PYQT6_AVAILABLE:
                   "match_score": 0.85,
                   "delta_x": -5.2,
                   "delta_y": 0.1,
-                  "train_position": 123.4
+                  "train_position": 123.4,
+                  "abs_pos_x": 10.5,
+                  "abs_pos_y": -2.3
                 },
                 ...
               ]
             }
 
-            【scaling_factorの意味】
-            - 低解像度でのスキャン係数（例: 0.5 = 元の50%サイズ）
-            - 実際の変位 = delta * (1 / scaling_factor)
-            - 例: delta_x=-5.2, scaling=0.5 → 実際の変位 = -5.2 / 0.5 = -10.4
+            【各フィールドの意味】
+            - video_path: 元動画ファイルのパス（高解像度再スキャン時に使用）
+            - scaling_factor: 低解像度でのスキャン係数（例: 0.5 = 元の50%サイズ）
+              実際の変位 = delta * (1 / scaling_factor)
+            - abs_pos_x, abs_pos_y: カメラの手ぶれによる背景の移動量
+              高解像度再スキャン時に、この分だけフレーム全体をシフトする
+
+            【高解像度再スキャンの手順】
+            1. .tspos2ファイルを読み込む
+            2. video_pathから元動画を開く
+            3. historyの各フレームを高解像度で処理
+            4. abs_posで手ぶれ補正、deltaで列車の動きを追跡
+            5. scaling_factorで座標を変換
             """
             # 保留中の画像があればそれを使う（最新）
             image_to_save = (
@@ -316,9 +328,11 @@ class Render_one:
         num_leading_frames: int,
         window_manager=None,
         scaling_factor: float = 1.0,
+        video_path: str = None,
     ):
         self.leading_frames = FIFO(num_leading_frames)
-        self.history = []
+        self.history = []  # PathItemのリスト
+        self.abs_positions = []  # 各フレームのabsolute_position（手ぶれ補正）
         self.id = id
         self.canvas = SimpleImage()
         self.first = False
@@ -327,6 +341,7 @@ class Render_one:
         self.window_manager = window_manager
         self.window = None
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
+        self.video_path = video_path  # 動画ファイルパス（高解像度再スキャン用）
 
     def done(self):
         self.alive = False
@@ -358,10 +373,19 @@ class Render_one:
             )
             self.first = False
 
-    def put(self, frame: np.ndarray, pathitem: PathItem, quality_threshold=0.0):
+    def put(
+        self,
+        frame: np.ndarray,
+        pathitem: PathItem,
+        quality_threshold=0.0,
+        absolute_position=None,
+    ):
         if not self.alive:
             return
         self.history.append(pathitem)
+        self.abs_positions.append(
+            absolute_position if absolute_position is not None else (0, 0)
+        )
         self.leading_frames.append(frame)
         if len(self.history) > 20:
             if 0 < self.quality < quality_threshold:  # or abs(self.train_position) < 3:
@@ -441,6 +465,7 @@ class Render_one:
         Returns:
             dict: stitching履歴データ（JSON形式）
                 - id: PathのID
+                - video_path: 元動画ファイルのパス（高解像度再スキャン用）
                 - train_position: 最終的なキャンバス上の位置
                 - quality: 平均品質スコア
                 - scaling_factor: 低解像度→高解像度への変換係数
@@ -450,17 +475,23 @@ class Render_one:
                     * match_score: マッチングスコア
                     * delta_x, delta_y: 直前のコマからの変位ベクトル（スケール済み）
                     * train_position: そのフレームでのキャンバス位置
+                    * abs_pos_x, abs_pos_y: 手ぶれによる背景移動量
         """
         # train_positionを逆算（最終位置から各フレームの位置を計算）
         current_pos = 0
         history_data = []
 
-        for h in self.history:
+        for idx, h in enumerate(self.history):
             frame_index, match_score = h.value
             delta_x, delta_y = h.xy
             dd = -((delta_x**2 + delta_y**2) ** 0.5)
             if dd != 0:
                 current_pos += dd
+
+            # absolute_positionを取得（保存されていれば）
+            abs_pos = (
+                self.abs_positions[idx] if idx < len(self.abs_positions) else (0, 0)
+            )
 
             history_data.append(
                 {
@@ -469,11 +500,14 @@ class Render_one:
                     "delta_x": float(delta_x),
                     "delta_y": float(delta_y),
                     "train_position": float(current_pos),
+                    "abs_pos_x": float(abs_pos[0]),
+                    "abs_pos_y": float(abs_pos[1]),
                 }
             )
 
         return {
             "id": self.id,
+            "video_path": self.video_path,
             "train_position": float(self.train_position),
             "quality": float(self.quality),
             "scaling_factor": float(self.scaling_factor),
@@ -650,6 +684,7 @@ class Render:
         self.max_quality = 0.0
         self.window_manager = None
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
+        self.video_path = video_path  # 動画ファイルパス
 
         if use_pyqt:
             # 動画ファイルパスからベース名を取得
@@ -683,6 +718,7 @@ class Render:
         id: int,
         frame: np.ndarray,
         historyitem: PathItem,
+        absolute_position=None,
     ):
         # 既に削除されたPathはスキップ（効率化）
         if id in self.renderers:
@@ -694,10 +730,16 @@ class Render:
                 num_leading_frames=20,
                 window_manager=self.window_manager,
                 scaling_factor=self.scaling_factor,
+                video_path=self.video_path,
             )
             self.renderers[id] = r
 
-        r.put(frame, historyitem, quality_threshold=self.max_quality * 0.75)
+        r.put(
+            frame,
+            historyitem,
+            quality_threshold=self.max_quality * 0.75,
+            absolute_position=absolute_position,
+        )
         q = r.quality
         # 最高品質が更新されたら、低品質ウィンドウをチェックして閉じる
         if self.max_quality < q:

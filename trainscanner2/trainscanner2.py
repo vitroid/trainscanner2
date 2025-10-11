@@ -54,19 +54,21 @@ def main():
         ):
             logger.info(f"{frame_index=} {absolute_position=}")
             frame_positions[frame_index] = absolute_position
-            yield frame_index, matchscore, scaled_frame
+            yield frame_index, absolute_position, matchscore, scaled_frame
 
     motiondetector = MotionDetector()
     best_score = 0.0
     # def detect_iter(self, iterator, plot: bool = False):
     # iterator()からスコア行列をとりだし、pathをたどり、pathがとぎれたら鎖(移動ベクトルの列挙)を返す。
-    for frame_index, matchscore, frame in iterator():
+    for frame_index, absolute_position, matchscore, frame in iterator():
         paths, dropped_paths = motiondetector._detect(
             matchscore, frame_index=frame_index
         )
 
         for id, path in paths.items():
-            renderer.put(id, frame, path.history[-1])
+            renderer.put(
+                id, frame, path.history[-1], absolute_position=absolute_position
+            )
         for path in dropped_paths:
             renderer.done(path)
 
