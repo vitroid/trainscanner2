@@ -68,12 +68,14 @@ if PYQT6_AVAILABLE:
             window_id: int,
             video_base: str = None,
             close_callback=None,  # ウィンドウが閉じられたときにRenderに通知するコールバック
+            render_one=None,  # Render_oneインスタンス（履歴保存用）
             parent=None,
         ):
             super().__init__(parent)
             self.window_id = window_id
             self.video_base = video_base or "train_scan"
             self.close_callback = close_callback
+            self.render_one = render_one  # stitching履歴にアクセスするため
             self.setWindowTitle(f"Train Scanner - ID: {window_id}")
 
             # 画像管理
@@ -193,12 +195,36 @@ if PYQT6_AVAILABLE:
 
         def save_image(self):
             """
-            画像を保存する（ダイアログなしで自動保存）
+            画像とstitching履歴を保存する（ダイアログなしで自動保存）
 
             【仕様】
-            - ファイル名: {動画名}_{ウィンドウID}.jpg
+            - 画像ファイル名: {動画名}_{ウィンドウID}.jpg
+            - 履歴ファイル名: {動画名}_{ウィンドウID}.tspos2 (JSON形式)
             - 保留中の画像がある場合はそれを保存（最新の画像）
             - ダイアログは表示せず、ワンクリックで保存完了
+
+            【.tspos2ファイル形式例】
+            {
+              "id": 28,
+              "train_position": 1234.5,
+              "quality": 0.856,
+              "scaling_factor": 0.5,
+              "history": [
+                {
+                  "frame_index": 100,
+                  "match_score": 0.85,
+                  "delta_x": -5.2,
+                  "delta_y": 0.1,
+                  "train_position": 123.4
+                },
+                ...
+              ]
+            }
+
+            【scaling_factorの意味】
+            - 低解像度でのスキャン係数（例: 0.5 = 元の50%サイズ）
+            - 実際の変位 = delta * (1 / scaling_factor)
+            - 例: delta_x=-5.2, scaling=0.5 → 実際の変位 = -5.2 / 0.5 = -10.4
             """
             # 保留中の画像があればそれを使う（最新）
             image_to_save = (
@@ -211,14 +237,24 @@ if PYQT6_AVAILABLE:
                 QMessageBox.warning(self, "警告", "保存する画像がありません")
                 return
 
-            # 動画のベース名 + ID + .jpg で自動保存
-            file_path = f"{self.video_base}_{self.window_id}.jpg"
+            # 動画のベース名 + ID でファイル名を作成
+            base_path = f"{self.video_base}_{self.window_id}"
+            image_path = f"{base_path}.jpg"
+            history_path = f"{base_path}.tspos2"
 
             try:
-                cv2.imwrite(file_path, image_to_save)
+                # 画像を保存
+                cv2.imwrite(image_path, image_to_save)
+
+                # stitching履歴を保存（Render_oneがあれば）
+                if self.render_one:
+                    history_data = self.render_one.export_history()
+                    with open(history_path, "w", encoding="utf-8") as f:
+                        json.dump(history_data, f, indent=2, ensure_ascii=False)
+
                 # 保存成功のメッセージは表示しない（ワンクリック操作を維持）
             except Exception as e:
-                QMessageBox.critical(self, "エラー", f"画像の保存に失敗しました:\n{e}")
+                QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
 
         def closeEvent(self, event):
             """
@@ -274,7 +310,13 @@ class Render_one:
 
     logger = getLogger(__name__)
 
-    def __init__(self, id: int, num_leading_frames: int, window_manager=None):
+    def __init__(
+        self,
+        id: int,
+        num_leading_frames: int,
+        window_manager=None,
+        scaling_factor: float = 1.0,
+    ):
         self.leading_frames = FIFO(num_leading_frames)
         self.history = []
         self.id = id
@@ -284,6 +326,7 @@ class Render_one:
         self.alive = True
         self.window_manager = window_manager
         self.window = None
+        self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
 
     def done(self):
         self.alive = False
@@ -356,7 +399,10 @@ class Render_one:
                 if self.window_manager:
                     try:
                         if self.window is None:
-                            self.window = self.window_manager.create_window(self.id)
+                            # ウィンドウ作成時にself（Render_one）を渡す（履歴保存用）
+                            self.window = self.window_manager.create_window(
+                                self.id, render_one=self
+                            )
                         self.window_manager.update_window(self.id, img)
                     except Exception as e:
                         self.logger.error(
@@ -378,6 +424,61 @@ class Render_one:
         if len(self.history) > 20:
             return np.mean([h.value[1] for h in self.history])
         return 0.0
+
+    def export_history(self):
+        """
+        stitching履歴をエクスポート（.tspos2ファイル保存用）
+
+        【目的】
+        - レンダリングとデータ保存の責務を分離
+        - 画像とは別にstitching情報を保存できるようにする
+        - 高解像度での再レンダリングに必要な情報を提供
+
+        【.tspos2ファイルの用途】
+        - 低解像度でスキャンした後、高解像度で再スキャンする際に使用
+        - 既知のPath情報を使って、高精度なstitchingを実行
+
+        Returns:
+            dict: stitching履歴データ（JSON形式）
+                - id: PathのID
+                - train_position: 最終的なキャンバス上の位置
+                - quality: 平均品質スコア
+                - scaling_factor: 低解像度→高解像度への変換係数
+                  （実際の変位 = delta * (1/scaling_factor)）
+                - history: フレームごとの詳細情報のリスト
+                    * frame_index: ビデオのフレーム番号
+                    * match_score: マッチングスコア
+                    * delta_x, delta_y: 直前のコマからの変位ベクトル（スケール済み）
+                    * train_position: そのフレームでのキャンバス位置
+        """
+        # train_positionを逆算（最終位置から各フレームの位置を計算）
+        current_pos = 0
+        history_data = []
+
+        for h in self.history:
+            frame_index, match_score = h.value
+            delta_x, delta_y = h.xy
+            dd = -((delta_x**2 + delta_y**2) ** 0.5)
+            if dd != 0:
+                current_pos += dd
+
+            history_data.append(
+                {
+                    "frame_index": int(frame_index),
+                    "match_score": float(match_score),
+                    "delta_x": float(delta_x),
+                    "delta_y": float(delta_y),
+                    "train_position": float(current_pos),
+                }
+            )
+
+        return {
+            "id": self.id,
+            "train_position": float(self.train_position),
+            "quality": float(self.quality),
+            "scaling_factor": float(self.scaling_factor),
+            "history": history_data,
+        }
 
 
 if PYQT6_AVAILABLE:
@@ -462,13 +563,20 @@ if PYQT6_AVAILABLE:
                 if self.renderer_callback:
                     self.renderer_callback(window_id)
 
-        def create_window(self, window_id: int):
-            """新しいウィンドウを作成"""
+        def create_window(self, window_id: int, render_one=None):
+            """
+            新しいウィンドウを作成
+
+            Args:
+                window_id: ウィンドウID
+                render_one: Render_oneインスタンス（履歴保存用）
+            """
             if window_id not in self.windows:
                 window = ImageWindow(
                     window_id,
                     video_base=self.video_base,
                     close_callback=self._on_window_closed,
+                    render_one=render_one,
                 )
                 window.show()
                 self.windows[window_id] = window
@@ -535,10 +643,13 @@ class Render:
 
     logger = getLogger(__name__)
 
-    def __init__(self, use_pyqt=True, video_path: str = None):
+    def __init__(
+        self, use_pyqt=True, video_path: str = None, scaling_factor: float = 1.0
+    ):
         self.renderers = {}  # {id: Render_one} 全Path（active/finished両方）
         self.max_quality = 0.0
         self.window_manager = None
+        self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
 
         if use_pyqt:
             # 動画ファイルパスからベース名を取得
@@ -579,7 +690,10 @@ class Render:
         else:
             # 新しいPathを作成
             r = Render_one(
-                id, num_leading_frames=20, window_manager=self.window_manager
+                id,
+                num_leading_frames=20,
+                window_manager=self.window_manager,
+                scaling_factor=self.scaling_factor,
             )
             self.renderers[id] = r
 

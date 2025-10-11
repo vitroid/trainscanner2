@@ -46,7 +46,7 @@ def main():
     frame_positions = {}
 
     # PyQt6ウィンドウで表示（OpenCVウィンドウを使う場合は use_pyqt=False）
-    renderer = Render(video_path=videofile)
+    renderer = Render(video_path=videofile, scaling_factor=scale)
 
     def iterator():
         for frame_index, absolute_position, matchscore, scaled_frame in analyze_iter(
