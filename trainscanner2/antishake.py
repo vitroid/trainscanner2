@@ -51,7 +51,7 @@ class AntiShaker2:
         self._absy += dy
         diff_img = self._last_frame.copy()
         shifted_frame = shift(frame_std, dx, dy)
-        cv2.imshow("diff", diff_img - shifted_frame)
+        # cv2.imshow("diff", diff_img - shifted_frame)
         self._last_frame = frame_std.copy()
         return shift(frame, self._absx, self._absy), (dx, dy), (self._absx, self._absy)
 
