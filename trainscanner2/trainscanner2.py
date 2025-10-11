@@ -43,9 +43,10 @@ def main():
     if scale > 1.0:
         scale = 1.0
 
-    frame_positions = dict()
+    frame_positions = {}
 
-    renderer = Render()
+    # PyQt6ウィンドウで表示（OpenCVウィンドウを使う場合は use_pyqt=False）
+    renderer = Render(video_path=videofile)
 
     def iterator():
         for frame_index, absolute_position, matchscore, scaled_frame in analyze_iter(
@@ -70,6 +71,14 @@ def main():
             renderer.done(path)
 
     motiondetector.done()
+
+    # 処理完了後、低品質ウィンドウを自動で閉じる
+    logger.info("Processing complete. Closing low-quality windows...")
+    renderer.close_low_quality_windows(quality_ratio=0.5)
+
+    # PyQt6ウィンドウが全て閉じられるまで待機
+    logger.info("Close remaining windows to exit.")
+    renderer.wait_for_windows_close()
 
 
 if __name__ == "__main__":

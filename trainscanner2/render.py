@@ -4,6 +4,237 @@ from trainscanner.image import linear_alpha
 import cv2
 from logging import getLogger
 from trainscanner2 import FIFO, PathItem
+import sys
+import time
+import os
+
+# PyQt6のインポートを試みる（インストールされていない場合はNoneに）
+try:
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QMainWindow,
+        QScrollArea,
+        QLabel,
+        QWidget,
+        QVBoxLayout,
+    )
+    from PyQt6.QtGui import QImage, QPixmap
+    from PyQt6.QtCore import Qt, QTimer
+
+    PYQT6_AVAILABLE = True
+except ImportError:
+    PYQT6_AVAILABLE = False
+    QApplication = QMainWindow = QScrollArea = QLabel = None
+    QWidget = QVBoxLayout = QImage = QPixmap = Qt = QTimer = None
+
+
+def cv2_to_qpixmap(cv_img):
+    """OpenCVの画像(BGR)をQPixmapに変換する"""
+    if not PYQT6_AVAILABLE or cv_img is None:
+        return None
+    height, width, channel = cv_img.shape
+    bytes_per_line = 3 * width
+    # BGRからRGBに変換
+    rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+    q_img = QImage(
+        rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
+    )
+    return QPixmap.fromImage(q_img)
+
+
+if PYQT6_AVAILABLE:
+    from PyQt6.QtWidgets import QPushButton, QHBoxLayout, QFileDialog, QMessageBox
+    from PyQt6.QtGui import QShortcut, QKeySequence
+
+    class ImageWindow(QMainWindow):
+        """
+        PyQt6を使ったスクロール可能な画像表示ウィンドウ
+
+        【目的】
+        - OpenCVのcv2.imshowの代替として、より高機能なGUIを提供
+        - 画像が大きくなってもウィンドウサイズは固定（スクロールバーで表示）
+        - 保存・閉じるボタンを提供
+        - Command-W（Ctrl-W）でウィンドウを閉じられる
+
+        【macOSでの表示問題の解決】
+        - 更新頻度を1秒に1回に制限（last_update_time, pending_image）
+        - repaint() + processEvents() で強制的に再描画
+        - これにより、影だけでなく実際の内容が表示されるようになった
+        """
+
+        def __init__(
+            self,
+            window_id: int,
+            video_base: str = None,
+            close_callback=None,  # ウィンドウが閉じられたときにRenderに通知するコールバック
+            parent=None,
+        ):
+            super().__init__(parent)
+            self.window_id = window_id
+            self.video_base = video_base or "train_scan"
+            self.close_callback = close_callback
+            self.setWindowTitle(f"Train Scanner - ID: {window_id}")
+
+            # 画像管理
+            self.current_image = None  # 現在表示中の画像
+            self.last_update_time = 0  # 最後の更新時刻（更新頻度制限用）
+            self.pending_image = None  # 保留中の画像（1秒以内の更新はここに保存）
+
+            # 最大ウィンドウサイズを設定（画面サイズの80%程度）
+            self.setMaximumSize(1920, 1080)
+            self.resize(800, 600)
+
+            # メインウィジェットとレイアウト
+            main_widget = QWidget()
+            main_layout = QVBoxLayout()
+            main_widget.setLayout(main_layout)
+
+            # スクロールエリアを作成
+            self.scroll_area = QScrollArea()
+            self.scroll_area.setWidgetResizable(False)  # 画像サイズに合わせない
+            self.scroll_area.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            self.scroll_area.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+
+            # 画像を表示するラベル
+            self.image_label = QLabel()
+            self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.scroll_area.setWidget(self.image_label)
+
+            # ボタンを配置するレイアウト
+            button_layout = QHBoxLayout()
+
+            # 保存ボタン
+            self.save_button = QPushButton("保存")
+            self.save_button.clicked.connect(self.save_image)
+            button_layout.addWidget(self.save_button)
+
+            # 閉じるボタン
+            self.close_button = QPushButton("閉じる")
+            self.close_button.clicked.connect(self.close)
+            button_layout.addWidget(self.close_button)
+
+            # レイアウトに追加
+            main_layout.addWidget(self.scroll_area)
+            main_layout.addLayout(button_layout)
+
+            self.setCentralWidget(main_widget)
+
+            # macOS標準のCommand-W（Windows/LinuxではCtrl-W）でウィンドウを閉じる
+            close_shortcut = QShortcut(QKeySequence.StandardKey.Close, self)
+            close_shortcut.activated.connect(self.close)
+
+        def update_image(self, cv_img, force=False):
+            """
+            画像を更新する（更新頻度制限あり）
+
+            【問題】macOSでは毎フレーム更新すると描画が追いつかず、影だけが表示される
+            【解決】1秒に1回の更新に制限し、間の更新はpending_imageに保存
+
+            Args:
+                cv_img: 表示する画像（OpenCV形式）
+                force: Trueの場合は頻度制限を無視して即座に更新
+            """
+            if cv_img is None:
+                return
+
+            # 初回は必ず表示（ウィンドウが空にならないように）
+            is_first_update = self.last_update_time == 0
+
+            current_time = time.time()
+            # 1秒に1回の更新に制限（force=True または初回は例外）
+            if (
+                not force
+                and not is_first_update
+                and (current_time - self.last_update_time) < 1.0
+            ):
+                # 1秒以内の更新は保留（後でflush_pendingで表示される）
+                self.pending_image = cv_img.copy()
+                return
+
+            self.current_image = cv_img.copy()
+            self.pending_image = None
+            self.last_update_time = current_time
+
+            pixmap = cv2_to_qpixmap(cv_img)
+            if pixmap:
+                self.image_label.setPixmap(pixmap)
+                self.image_label.adjustSize()
+                # macOSで確実に描画するために強制的に再描画
+                self.image_label.repaint()
+                QApplication.processEvents()
+                # 画像の左端（最新部分）を表示
+                QTimer.singleShot(10, self._scroll_to_left)
+
+        def _scroll_to_left(self):
+            """スクロールバーを左端に移動（画像の最新部分を表示）"""
+            h_scrollbar = self.scroll_area.horizontalScrollBar()
+            h_scrollbar.setValue(h_scrollbar.minimum())
+
+        def flush_pending(self):
+            """
+            保留中の画像を強制的に更新
+
+            【目的】1秒ごとのタイマーから呼ばれて、保留中の画像を表示
+            【効果】更新頻度を抑えつつ、最新の画像も表示できる
+            """
+            if self.pending_image is not None:
+                self.update_image(self.pending_image, force=True)
+
+        def set_finished(self, quality: float):
+            """処理が完了したことを表示する"""
+            self.setWindowTitle(
+                f"Train Scanner - ID: {self.window_id} [処理完了 - Quality: {quality:.3f}]"
+            )
+
+        def save_image(self):
+            """
+            画像を保存する（ダイアログなしで自動保存）
+
+            【仕様】
+            - ファイル名: {動画名}_{ウィンドウID}.jpg
+            - 保留中の画像がある場合はそれを保存（最新の画像）
+            - ダイアログは表示せず、ワンクリックで保存完了
+            """
+            # 保留中の画像があればそれを使う（最新）
+            image_to_save = (
+                self.pending_image
+                if self.pending_image is not None
+                else self.current_image
+            )
+
+            if image_to_save is None:
+                QMessageBox.warning(self, "警告", "保存する画像がありません")
+                return
+
+            # 動画のベース名 + ID + .jpg で自動保存
+            file_path = f"{self.video_base}_{self.window_id}.jpg"
+
+            try:
+                cv2.imwrite(file_path, image_to_save)
+                # 保存成功のメッセージは表示しない（ワンクリック操作を維持）
+            except Exception as e:
+                QMessageBox.critical(self, "エラー", f"画像の保存に失敗しました:\n{e}")
+
+        def closeEvent(self, event):
+            """
+            ウィンドウが閉じられるときに呼ばれる（PyQt6の標準イベント）
+
+            【目的】ウィンドウが閉じられたことをRenderに通知し、Pathを削除
+            【呼ばれるタイミング】
+            - ユーザーが「閉じる」ボタンをクリック
+            - Command-W（Ctrl-W）を押す
+            - ウィンドウの×ボタンをクリック
+            """
+            if self.close_callback:
+                self.close_callback(self.window_id)
+            event.accept()
+
+else:
+    ImageWindow = None
 
 
 def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
@@ -42,7 +273,7 @@ class Render_one:
 
     logger = getLogger(__name__)
 
-    def __init__(self, id: int, num_leading_frames: int):
+    def __init__(self, id: int, num_leading_frames: int, window_manager=None):
         self.leading_frames = FIFO(num_leading_frames)
         self.history = []
         self.id = id
@@ -50,11 +281,19 @@ class Render_one:
         self.first = False
         self.train_position = 0
         self.alive = True
+        self.window_manager = window_manager
+        self.window = None
 
     def done(self):
         self.alive = False
-        cv2.destroyWindow(f"{self.id}")
-        cv2.waitKey(1)
+        # PyQt6ウィンドウは閉じない（ユーザーが手動で閉じるボタンを押すまで残す）
+        if self.window_manager and self.window:
+            # ウィンドウのタイトルを「処理完了」に更新
+            self.window_manager.set_window_finished(self.id, self.quality)
+        else:
+            # OpenCVウィンドウのみ自動で閉じる
+            cv2.destroyWindow(f"{self.id}")
+            cv2.waitKey(1)
 
     def _render_one(
         self,
@@ -97,15 +336,37 @@ class Render_one:
             if img is not None:
                 cv2.putText(
                     img,
-                    f"{self.quality}",
-                    (10, 10),
+                    f"Quality: {self.quality:.3f}",
+                    (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
+                    0.7,
                     (0, 0, 255),
                     2,
                 )
-                cv2.imshow(f"{self.id}", img)
-                cv2.waitKey(1)
+                cv2.putText(
+                    img,
+                    f"ID: {self.id}",
+                    (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                )
+                if self.window_manager:
+                    try:
+                        if self.window is None:
+                            self.window = self.window_manager.create_window(self.id)
+                        self.window_manager.update_window(self.id, img)
+                    except Exception as e:
+                        self.logger.error(
+                            f"PyQt6 window error: {e}, falling back to OpenCV"
+                        )
+                        cv2.imshow(f"{self.id}", img)
+                        cv2.waitKey(1)
+                else:
+                    # PyQt6が使用されていない場合はOpenCVを使用
+                    cv2.imshow(f"{self.id}", img)
+                    cv2.waitKey(1)
         elif len(self.history) == 20:
             for f, pi in zip(self.leading_frames.queue, self.history):
                 self._render_one(f, pi)
@@ -118,15 +379,181 @@ class Render_one:
         return 0.0
 
 
+if PYQT6_AVAILABLE:
+
+    class WindowManager:
+        """
+        PyQt6のウィンドウを管理するクラス
+
+        【目的】
+        - 複数のImageWindowを一元管理
+        - メインスレッドでイベントループを回す（PyQt6の要件）
+        - 定期的に保留中の画像を更新
+
+        【重要】PyQt6では、GUIの更新はメインスレッドでしか行えない
+        そのため、タイマーで定期的にprocessEventsを呼ぶ必要がある
+        """
+
+        logger = getLogger(__name__)
+
+        def __init__(self, video_base: str = None, renderer_callback=None):
+            try:
+                # QApplicationのインスタンスを取得または作成（必須）
+                self.app = QApplication.instance()
+                if self.app is None:
+                    self.app = QApplication(sys.argv)
+
+                self.windows = {}  # window_id -> ImageWindow
+                self.video_base = video_base or "train_scan"
+                self.renderer_callback = (
+                    renderer_callback  # ウィンドウが閉じられたときにRenderに通知
+                )
+
+                # イベントループを定期的に処理するタイマー
+                # 【重要】これがないとウィンドウが応答しなくなる
+                self.event_timer = QTimer()
+                self.event_timer.timeout.connect(self.process_events)
+                self.event_timer.start(5)  # 5msごとにイベント処理（頻繁に回す）
+
+                # 保留中の画像を更新するタイマー
+                # 【目的】1秒以内に複数回更新があった場合、最新の画像を表示
+                self.flush_timer = QTimer()
+                self.flush_timer.timeout.connect(self.flush_all_pending)
+                self.flush_timer.start(1000)  # 1秒ごと
+
+                self.logger.info("WindowManager initialized with PyQt6")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize WindowManager: {e}")
+                raise
+
+        def process_events(self):
+            """
+            Qtのイベントループを処理
+
+            【重要】PyQt6のGUIを動作させるために必要
+            これを呼ばないと、ウィンドウが応答しなくなる
+            """
+            self.app.processEvents()
+
+        def flush_all_pending(self):
+            """
+            すべてのウィンドウの保留中の画像を更新
+
+            【目的】更新頻度制限（1秒に1回）により保留された画像を表示
+            【効果】毎フレーム更新しなくても、最新の画像が定期的に表示される
+            """
+            for window in self.windows.values():
+                window.flush_pending()
+
+        def _on_window_closed(self, window_id: int):
+            """
+            ウィンドウが閉じられたときのコールバック
+
+            【呼ばれるタイミング】ImageWindow.closeEventから呼ばれる
+            【動作】
+            1. windowsから削除（WindowManagerの管理から外す）
+            2. Renderに通知してPathを削除（メモリ解放、以降の処理をスキップ）
+            """
+            if window_id in self.windows:
+                self.logger.info(f"Window {window_id} closed")
+                del self.windows[window_id]
+                # Renderにも通知してPathを削除
+                if self.renderer_callback:
+                    self.renderer_callback(window_id)
+
+        def create_window(self, window_id: int):
+            """新しいウィンドウを作成"""
+            if window_id not in self.windows:
+                window = ImageWindow(
+                    window_id,
+                    video_base=self.video_base,
+                    close_callback=self._on_window_closed,
+                )
+                window.show()
+                self.windows[window_id] = window
+                # 即座にprocessEventsを呼んで表示を確実にする
+                self.app.processEvents()
+            return self.windows[window_id]
+
+        def update_window(self, window_id: int, cv_img):
+            """ウィンドウの画像を更新"""
+            if window_id in self.windows:
+                self.windows[window_id].update_image(cv_img)
+
+        def set_window_finished(self, window_id: int, quality: float):
+            """ウィンドウに処理完了を表示"""
+            if window_id in self.windows:
+                # 処理完了時は保留中の画像を強制更新
+                self.windows[window_id].flush_pending()
+                self.windows[window_id].set_finished(quality)
+
+        def close_window(self, window_id: int):
+            """ウィンドウを閉じる（プログラムから）"""
+            if window_id in self.windows:
+                self.windows[window_id].close()
+                # closeEventで自動削除されるので、ここでは削除しない
+
+        def close_all(self):
+            """すべてのウィンドウを閉じる"""
+            for window in list(self.windows.values()):
+                window.close()
+            # closeEventで自動削除されるので、clearは不要
+
+        def has_windows(self):
+            """ウィンドウが1つでも開いているかチェック"""
+            return len(self.windows) > 0
+
+        def wait_for_close(self):
+            """すべてのウィンドウが閉じられるまで待機"""
+            self.logger.info("Waiting for all windows to be closed...")
+            while self.has_windows():
+                self.app.processEvents()
+                time.sleep(0.1)
+            self.logger.info("All windows closed.")
+
+else:
+    WindowManager = None
+
+
 class Render:
     """
     極値とフレームをうけとり、個別のレンダラーに差配する。
     生きているrendererの最高品質を調査し、低品質rendererの打ち切り指示をする
     """
 
-    def __init__(self):
+    logger = getLogger(__name__)
+
+    def __init__(self, use_pyqt=True, video_path: str = None):
         self.renderers = {}
         self.max_quality = 0.0
+        self.window_manager = None
+
+        if use_pyqt:
+            # 動画ファイルパスからベース名を取得
+            video_base = None
+            if video_path:
+                # 拡張子を除いたベース名を取得
+                video_base = os.path.splitext(video_path)[0]
+
+            if not PYQT6_AVAILABLE:
+                self.logger.warning(
+                    "PyQt6 is not installed, using OpenCV windows instead"
+                )
+            elif WindowManager is None:
+                self.logger.warning(
+                    "WindowManager is not available, using OpenCV windows"
+                )
+            else:
+                try:
+                    # ウィンドウが閉じられたときにPathも削除するコールバックを渡す
+                    self.window_manager = WindowManager(
+                        video_base=video_base, renderer_callback=self.remove_renderer
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to initialize PyQt6, using OpenCV windows: {e}"
+                    )
+                    self.window_manager = None
 
     def put(
         self,
@@ -134,17 +561,98 @@ class Render:
         frame: np.ndarray,
         historyitem: PathItem,
     ):
+        # 既に削除されたPathはスキップ（効率化）
         if id in self.renderers:
             r = self.renderers[id]
         else:
-            r = Render_one(id, num_leading_frames=20)
+            # 新しいPathを作成
+            r = Render_one(
+                id, num_leading_frames=20, window_manager=self.window_manager
+            )
             self.renderers[id] = r
+
         r.put(frame, historyitem, quality_threshold=self.max_quality * 0.5)
         q = r.quality
         if self.max_quality < q:
             self.max_quality = q
 
     def done(self, id):
+        """
+        Pathの処理を終了（品質が閾値以下の場合）
+
+        【呼ばれるタイミング】Render_one.put()で品質が閾値以下になったとき
+        【動作】
+        1. ウィンドウを閉じる（または閉じない）
+        2. Pathを削除（メモリ解放、以降の処理をスキップ）
+        """
         if id in self.renderers:
             r = self.renderers[id]
             r.done()
+            # Pathを削除（メモリ解放、以降の処理をスキップ）
+            del self.renderers[id]
+            self.logger.info(f"Removed renderer {id}")
+
+    def remove_renderer(self, id):
+        """
+        レンダラーを削除（ユーザーが手動でウィンドウを閉じた場合など）
+
+        【呼ばれるタイミング】
+        - WindowManager._on_window_closedから呼ばれる
+        - ユーザーがウィンドウを閉じたとき
+
+        【目的】ウィンドウが閉じられたPathは以降処理不要なので削除
+        """
+        if id in self.renderers:
+            del self.renderers[id]
+            self.logger.info(f"Removed renderer {id}")
+
+    def close_low_quality_windows(self, quality_ratio: float = 0.5):
+        """
+        処理完了後に品質が閾値以下のウィンドウを自動で閉じる
+
+        【目的】
+        - 40個のウィンドウが開くと管理が大変
+        - 低品質なものは自動で閉じて、高品質なものだけを表示
+
+        【動作】
+        1. 最高品質 × quality_ratio を閾値とする
+        2. 閾値以下のウィンドウを閉じる
+        3. 同時にPathも削除（メモリ解放）
+
+        Args:
+            quality_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
+        """
+        if not self.renderers:
+            return
+
+        threshold = self.max_quality * quality_ratio
+        closed_count = 0
+
+        for id, renderer in list(self.renderers.items()):
+            if renderer.quality > 0 and renderer.quality < threshold:
+                self.logger.info(
+                    f"Auto-closing window {id}: quality={renderer.quality:.3f} < threshold={threshold:.3f}"
+                )
+                if self.window_manager:
+                    self.window_manager.close_window(id)
+                else:
+                    cv2.destroyWindow(f"{id}")
+                    cv2.waitKey(1)
+                # Pathを削除（メモリ解放）
+                del self.renderers[id]
+                closed_count += 1
+
+        if closed_count > 0:
+            self.logger.info(
+                f"Closed {closed_count} low-quality windows, removed their paths"
+            )
+
+    def close_all(self):
+        """すべてのウィンドウを閉じる"""
+        if self.window_manager:
+            self.window_manager.close_all()
+
+    def wait_for_windows_close(self):
+        """PyQt6ウィンドウが全て閉じられるまで待機（PyQt6使用時のみ）"""
+        if self.window_manager:
+            self.window_manager.wait_for_close()
