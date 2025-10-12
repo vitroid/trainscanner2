@@ -84,14 +84,17 @@ class ImageComb:
 
         # bufferだけの場合
         if not self.images and self.buffer is not None:
-            return self.buffer
+            return self.buffer.image if self.buffer.image is not None else None
 
         # imagesを横に連結
         if self.images:
             # すべての画像（images + buffer）を集める
             all_images = list(self.images)
-            if self.buffer is not None:
+            if self.buffer is not None and self.buffer.image is not None:
                 all_images.append(self.buffer.image)
+
+            if not all_images:
+                return None
 
             # 最大の高さを取得
             max_height = max(img.shape[0] for img in all_images)
@@ -106,7 +109,7 @@ class ImageComb:
                     pad_bottom = max_height - h - pad_top
                     if len(img.shape) == 3:  # カラー画像
                         padded = np.pad(
-                            img.image,
+                            img,
                             ((pad_top, pad_bottom), (0, 0), (0, 0)),
                             mode="constant",
                         )

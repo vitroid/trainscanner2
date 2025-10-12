@@ -46,8 +46,17 @@ def cv2_to_qpixmap(cv_img):
 
 
 if PYQT6_AVAILABLE:
-    from PyQt6.QtWidgets import QPushButton, QHBoxLayout, QFileDialog, QMessageBox
+    from PyQt6.QtWidgets import (
+        QPushButton,
+        QHBoxLayout,
+        QFileDialog,
+        QMessageBox,
+        QScrollBar,
+    )
     from PyQt6.QtGui import QShortcut, QKeySequence
+    from trainscanner2.widget import ImageCombWidget
+
+    # ImageCombWidgetはwidget.pyに移動しました
 
     class ImageWindow(QMainWindow):
         """
@@ -71,6 +80,7 @@ if PYQT6_AVAILABLE:
             video_base: str = None,
             close_callback=None,  # ウィンドウが閉じられたときにRenderに通知するコールバック
             render_one=None,  # Render_oneインスタンス（履歴保存用）
+            show_gaps=False,  # デバッグ用: 短冊間に1px隙間を表示
             parent=None,
         ):
             super().__init__(parent)
@@ -94,20 +104,28 @@ if PYQT6_AVAILABLE:
             main_layout = QVBoxLayout()
             main_widget.setLayout(main_layout)
 
-            # スクロールエリアを作成
+            # ImageComb用の表示ウィジェット（仮想スクロール）
+            self.image_comb_widget = ImageCombWidget(show_gaps=show_gaps)
+
+            # カスタム横スクロールバー
+            self.h_scrollbar = QScrollBar(Qt.Orientation.Horizontal)
+            self.h_scrollbar.valueChanged.connect(self._on_scroll)
+            self.h_scrollbar.setVisible(False)  # 初期は非表示
+
+            # 従来のシンプル表示用（後方互換性）
+            # ImageCombではなく通常の画像を表示する場合に使用
             self.scroll_area = QScrollArea()
-            self.scroll_area.setWidgetResizable(False)  # 画像サイズに合わせない
+            self.scroll_area.setWidgetResizable(False)
             self.scroll_area.setHorizontalScrollBarPolicy(
                 Qt.ScrollBarPolicy.ScrollBarAsNeeded
             )
             self.scroll_area.setVerticalScrollBarPolicy(
                 Qt.ScrollBarPolicy.ScrollBarAsNeeded
             )
-
-            # 画像を表示するラベル
             self.image_label = QLabel()
             self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.scroll_area.setWidget(self.image_label)
+            self.scroll_area.setVisible(False)  # ImageComb使用時は非表示
 
             # ボタンを配置するレイアウト
             button_layout = QHBoxLayout()
@@ -123,7 +141,12 @@ if PYQT6_AVAILABLE:
             button_layout.addWidget(self.close_button)
 
             # レイアウトに追加
+            # ImageComb用（デフォルト表示）
+            main_layout.addWidget(self.image_comb_widget)
+            main_layout.addWidget(self.h_scrollbar)
+            # 従来の表示用（非表示）
             main_layout.addWidget(self.scroll_area)
+            # ボタン
             main_layout.addLayout(button_layout)
 
             self.setCentralWidget(main_widget)
@@ -132,21 +155,39 @@ if PYQT6_AVAILABLE:
             close_shortcut = QShortcut(QKeySequence.StandardKey.Close, self)
             close_shortcut.activated.connect(self.close)
 
+        def _on_scroll(self, value):
+            """スクロールバーの値が変更されたときに呼ばれる"""
+            self.image_comb_widget.set_scroll_position(value)
+
         def update_image(self, cv_img, force=False):
             """
-            画像を更新する（更新頻度制限あり）
+            画像を更新する（ImageComb対応版）
 
-            【問題】macOSでは毎フレーム更新すると描画が追いつかず、影だけが表示される
-            【解決】1秒に1回の更新に制限し、間の更新はpending_imageに保存
-
-            Args:
-                cv_img: 表示する画像（OpenCV形式）
-                force: Trueの場合は頻度制限を無視して即座に更新
+            【動作】
+            - cv_imgではなく、render_one.canvasのImageCombを直接使う
+            - 従来のcv_img表示モードも維持（後方互換性）
             """
-            if cv_img is None:
-                return
+            # ImageCombモードの場合
+            if (
+                self.render_one
+                and hasattr(self.render_one, "canvas")
+                and isinstance(self.render_one.canvas, ImageComb)
+            ):
+                return self.update_image_comb(force=force)
 
-            # 初回は必ず表示（ウィンドウが空にならないように）
+            # 従来モード（cv_imgを表示）
+            return self._update_image_legacy(cv_img, force=force)
+
+        def update_image_comb(self, force=False):
+            """
+            ImageCombモードで画像を更新（更新頻度制限あり）
+
+            【動作】
+            - render_one.canvasのImageCombを使って表示
+            - 可視範囲だけをレンダリング（効率的）
+            - 大きな画像全体を結合する必要がない
+            """
+            # 初回は必ず表示
             is_first_update = self.last_update_time == 0
 
             current_time = time.time()
@@ -156,7 +197,51 @@ if PYQT6_AVAILABLE:
                 and not is_first_update
                 and (current_time - self.last_update_time) < 1.0
             ):
-                # 1秒以内の更新は保留（後でflush_pendingで表示される）
+                return  # ImageCombモードではpending不要（canvasに既に追加されている）
+
+            self.last_update_time = current_time
+
+            # ImageCombウィジェットを表示モードに
+            self.image_comb_widget.setVisible(True)
+            self.h_scrollbar.setVisible(True)
+            self.scroll_area.setVisible(False)
+
+            # ImageCombを設定して表示
+            self.image_comb_widget.set_image_comb(self.render_one.canvas)
+
+            # スクロールバーの範囲を設定
+            total_width = self.image_comb_widget.total_width
+            visible_width = self.image_comb_widget.width()
+            if total_width > visible_width:
+                self.h_scrollbar.setMaximum(total_width - visible_width)
+                self.h_scrollbar.setPageStep(visible_width)
+            else:
+                self.h_scrollbar.setMaximum(0)
+
+            # 強制的に再描画
+            self.image_comb_widget.repaint()
+            QApplication.processEvents()
+
+        def _update_image_legacy(self, cv_img, force=False):
+            """
+            従来モードで画像を更新（後方互換性）
+
+            【動作】
+            - cv_imgを直接表示（ImageCombを使わない場合）
+            - 従来のQLabelとQScrollAreaを使用
+            """
+            if cv_img is None:
+                return
+
+            # 初回は必ず表示
+            is_first_update = self.last_update_time == 0
+
+            current_time = time.time()
+            if (
+                not force
+                and not is_first_update
+                and (current_time - self.last_update_time) < 1.0
+            ):
                 self.pending_image = cv_img.copy()
                 return
 
@@ -164,15 +249,18 @@ if PYQT6_AVAILABLE:
             self.pending_image = None
             self.last_update_time = current_time
 
+            # 従来表示モードに
+            self.image_comb_widget.setVisible(False)
+            self.h_scrollbar.setVisible(False)
+            self.scroll_area.setVisible(True)
+
             pixmap = cv2_to_qpixmap(cv_img)
             if pixmap:
                 self.image_label.setPixmap(pixmap)
                 self.image_label.adjustSize()
-                # macOSで確実に描画するために強制的に再描画
                 self.image_label.repaint()
                 QApplication.processEvents()
-                # 画像の左端（最新部分）を表示
-                # QTimer.singleShot(10, self._scroll_to_left)
+                QTimer.singleShot(10, self._scroll_to_left)
 
         def _scroll_to_left(self):
             """スクロールバーを左端に移動（画像の最新部分を表示）"""
@@ -186,8 +274,16 @@ if PYQT6_AVAILABLE:
             【目的】1秒ごとのタイマーから呼ばれて、保留中の画像を表示
             【効果】更新頻度を抑えつつ、最新の画像も表示できる
             """
-            if self.pending_image is not None:
-                self.update_image(self.pending_image, force=True)
+            # ImageCombモードでは常に更新（canvasに既にデータがある）
+            if (
+                self.render_one
+                and hasattr(self.render_one, "canvas")
+                and isinstance(self.render_one.canvas, ImageComb)
+            ):
+                self.update_image_comb(force=True)
+            # 従来モード
+            elif self.pending_image is not None:
+                self._update_image_legacy(self.pending_image, force=True)
 
         def set_finished(self, quality: float):
             """処理が完了したことを表示する"""
@@ -202,7 +298,7 @@ if PYQT6_AVAILABLE:
             【仕様】
             - 画像ファイル名: {動画名}_{ウィンドウID}.jpg
             - 履歴ファイル名: {動画名}_{ウィンドウID}.tspos2 (JSON形式)
-            - 保留中の画像がある場合はそれを保存（最新の画像）
+            - ImageCombの場合は全体を結合して保存
             - ダイアログは表示せず、ワンクリックで保存完了
 
             【.tspos2ファイル形式例】
@@ -240,12 +336,23 @@ if PYQT6_AVAILABLE:
             4. abs_posで手ぶれ補正、deltaで列車の動きを追跡
             5. scaling_factorで座標を変換
             """
-            # 保留中の画像があればそれを使う（最新）
-            image_to_save = (
-                self.pending_image
-                if self.pending_image is not None
-                else self.current_image
-            )
+            # 画像を取得
+            image_to_save = None
+
+            # ImageCombモードの場合
+            if (
+                self.render_one
+                and hasattr(self.render_one, "canvas")
+                and isinstance(self.render_one.canvas, ImageComb)
+            ):
+                image_to_save = self.render_one.canvas.get_image()
+            # 従来モード
+            else:
+                image_to_save = (
+                    self.pending_image
+                    if self.pending_image is not None
+                    else self.current_image
+                )
 
             if image_to_save is None:
                 QMessageBox.warning(self, "警告", "保存する画像がありません")
@@ -413,44 +520,62 @@ class Render_one:
                 return
 
             self._render_one(frame, pathitem)
-            img = self.canvas.get_image()
-            if img is not None:
-                cv2.putText(
-                    img,
-                    f"Quality: {self.quality:.3f}",
-                    (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 0, 255),
-                    2,
-                )
-                cv2.putText(
-                    img,
-                    f"ID: {self.id}",
-                    (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 255, 0),
-                    2,
-                )
+
+            # ImageCombモードの場合、canvas.get_image()は重い（全体結合）
+            # PyQt6では、update_windowにNoneを渡してcanvasを直接参照させる
+            use_imagecomb = isinstance(self.canvas, ImageComb)
+
+            if use_imagecomb:
+                # ImageCombモード: ウィンドウに通知だけ（画像は渡さない）
                 if self.window_manager:
                     try:
                         if self.window is None:
-                            # ウィンドウ作成時にself（Render_one）を渡す（履歴保存用）
                             self.window = self.window_manager.create_window(
                                 self.id, render_one=self
                             )
-                        self.window_manager.update_window(self.id, img)
+                        self.window_manager.update_window(self.id, None)  # Noneを渡す
                     except Exception as e:
-                        self.logger.error(
-                            f"PyQt6 window error: {e}, falling back to OpenCV"
-                        )
+                        self.logger.error(f"PyQt6 window error: {e}")
+                # OpenCVは非対応（ImageCombの全体画像が必要）
+            else:
+                # 従来モード: 画像を取得して渡す
+                img = self.canvas.get_image()
+                if img is not None:
+                    cv2.putText(
+                        img,
+                        f"Quality: {self.quality:.3f}",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 0, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        img,
+                        f"ID: {self.id}",
+                        (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 0),
+                        2,
+                    )
+                    if self.window_manager:
+                        try:
+                            if self.window is None:
+                                self.window = self.window_manager.create_window(
+                                    self.id, render_one=self
+                                )
+                            self.window_manager.update_window(self.id, img)
+                        except Exception as e:
+                            self.logger.error(
+                                f"PyQt6 window error: {e}, falling back to OpenCV"
+                            )
+                            cv2.imshow(f"{self.id}", img)
+                            cv2.waitKey(1)
+                    else:
+                        # PyQt6が使用されていない場合はOpenCVを使用
                         cv2.imshow(f"{self.id}", img)
                         cv2.waitKey(1)
-                else:
-                    # PyQt6が使用されていない場合はOpenCVを使用
-                    cv2.imshow(f"{self.id}", img)
-                    cv2.waitKey(1)
         elif len(self.history) == 20:
             for f, pi in zip(self.leading_frames.queue, self.history):
                 self._render_one(f, pi)
@@ -547,7 +672,9 @@ if PYQT6_AVAILABLE:
 
         logger = getLogger(__name__)
 
-        def __init__(self, video_base: str = None, renderer_callback=None):
+        def __init__(
+            self, video_base: str = None, renderer_callback=None, show_gaps=False
+        ):
             try:
                 # QApplicationのインスタンスを取得または作成（必須）
                 self.app = QApplication.instance()
@@ -556,6 +683,7 @@ if PYQT6_AVAILABLE:
 
                 self.windows = {}  # window_id -> ImageWindow
                 self.video_base = video_base or "train_scan"
+                self.show_gaps = show_gaps  # デバッグ用: 短冊間に隙間を表示
                 self.renderer_callback = (
                     renderer_callback  # ウィンドウが閉じられたときにRenderに通知
                 )
@@ -626,6 +754,7 @@ if PYQT6_AVAILABLE:
                     video_base=self.video_base,
                     close_callback=self._on_window_closed,
                     render_one=render_one,
+                    show_gaps=self.show_gaps,  # デバッグ用
                 )
                 window.show()
                 self.windows[window_id] = window
@@ -693,7 +822,11 @@ class Render:
     logger = getLogger(__name__)
 
     def __init__(
-        self, use_pyqt=True, video_path: str = None, scaling_factor: float = 1.0
+        self,
+        use_pyqt=True,
+        video_path: str = None,
+        scaling_factor: float = 1.0,
+        show_gaps=False,
     ):
         self.renderers = {}  # {id: Render_one} 全Path（active/finished両方）
         self.max_quality = 0.0
@@ -720,7 +853,9 @@ class Render:
                 try:
                     # ウィンドウが閉じられたときにPathも削除するコールバックを渡す
                     self.window_manager = WindowManager(
-                        video_base=video_base, renderer_callback=self.remove_renderer
+                        video_base=video_base,
+                        renderer_callback=self.remove_renderer,
+                        show_gaps=show_gaps,  # デバッグ用
                     )
                 except Exception as e:
                     self.logger.warning(
