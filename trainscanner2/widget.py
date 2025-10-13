@@ -119,7 +119,7 @@ if PYQT6_AVAILABLE:
 
         def update_display(self, start_index=None):
             """
-            表示を更新（可視範囲の画像だけを結合）
+            表示を更新（ImageComb.get_image()を使用）
 
             Args:
                 start_index: 表示開始位置（Noneの場合は現在位置を維持）
@@ -130,77 +130,33 @@ if PYQT6_AVAILABLE:
             if start_index is not None:
                 self.current_start_index = start_index
 
-            # 画面幅に収まる範囲の画像を取得
+            # 画面幅を取得（少し余裕を持たせる）
             widget_width = self.width()
-            visible_images = []
-            total_width = 0
+            request_width = int(widget_width * 1.5)
 
-            # 表示開始位置から、画面幅を超えるまで画像を集める
-            for i in range(self.current_start_index, len(self.image_comb.images)):
-                img = self.image_comb.images[i]
-                # show_gapsがTrueの場合、右端1pxを削る
-                if self.show_gaps and img.shape[1] > 1:
-                    img = img[:, :-1]
-                visible_images.append(img)
-                total_width += img.shape[1]
-                if total_width > widget_width * 1.5:  # 少し余裕を持たせる
-                    break
+            # ImageComb.get_image()を使って可視範囲を取得
+            combined = self.image_comb.get_image(
+                start=self.current_start_index, width=request_width
+            )
 
-            # bufferも追加（最後の部分）
-            if self.current_start_index + len(visible_images) >= len(
-                self.image_comb.images
-            ):
-                if (
-                    self.image_comb.buffer is not None
-                    and self.image_comb.buffer.image is not None
-                ):
-                    visible_images.append(self.image_comb.buffer.image)
+            if combined is not None:
+                # show_gapsがTrueの場合、短冊間に隙間を追加
+                # TODO: ImageComb.get_image()にshow_gaps引数を追加して、
+                # ImageComb側で隙間を入れるようにする
+                # 現状は隙間なしで表示（既に結合された画像には後から隙間を入れられない）
 
-            # 画像を結合
-            if visible_images:
-                # 高さを揃える
-                max_height = max(img.shape[0] for img in visible_images)
-                padded = []
-
-                for idx, img in enumerate(visible_images):
-                    h, w = img.shape[:2]
-
-                    # 高さを揃える
-                    if h < max_height:
-                        pad_top = (max_height - h) // 2
-                        pad_bottom = max_height - h - pad_top
-                        if len(img.shape) == 3:
-                            padded_img = np.pad(
-                                img,
-                                ((pad_top, pad_bottom), (0, 0), (0, 0)),
-                                mode="constant",
-                            )
-                        else:
-                            padded_img = np.pad(
-                                img, ((pad_top, pad_bottom), (0, 0)), mode="constant"
-                            )
-                        padded.append(padded_img)
-                    else:
-                        padded.append(img)
-
-                    # show_gapsがTrueの場合、短冊の後に1pxの黒い隙間を追加
-                    if self.show_gaps and idx < len(visible_images) - 1:
-                        gap = np.zeros((max_height, 1, 3), dtype=np.uint8)
-                        padded.append(gap)
-
-                combined = np.hstack(padded)
                 self.cached_pixmap = cv2_to_qpixmap(combined)
 
-                # 全体の幅を計算（スクロールバー用）
-                self.total_width = sum(
-                    img.shape[1] + (1 if self.show_gaps else 0)  # 隙間分を加算
-                    for img in self.image_comb.images
-                )
-                if (
-                    self.image_comb.buffer is not None
-                    and self.image_comb.buffer.image is not None
-                ):
-                    self.total_width += self.image_comb.buffer.image.shape[1]
+            # 全体の幅を計算（スクロールバー用）
+            self.total_width = sum(
+                img.shape[1] + (1 if self.show_gaps else 0)  # 隙間分を加算
+                for img in self.image_comb.images
+            )
+            if (
+                self.image_comb.buffer is not None
+                and self.image_comb.buffer.image is not None
+            ):
+                self.total_width += self.image_comb.buffer.image.shape[1]
 
             self.update()
 

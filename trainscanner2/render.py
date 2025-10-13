@@ -444,6 +444,7 @@ class Render_one:
         scaling_factor: float = 1.0,
         video_path: str = None,
     ):
+        self.num_leading_frames = num_leading_frames
         self.leading_frames = FIFO(num_leading_frames)
         self.history = []  # PathItemのリスト
         self.abs_positions = []  # 各フレームのabsolute_position（手ぶれ補正）
@@ -507,7 +508,7 @@ class Render_one:
             absolute_position if absolute_position is not None else (0, 0)
         )
         self.leading_frames.append(frame)
-        if len(self.history) > 20:
+        if len(self.history) > self.num_leading_frames:
             if 0 < self.quality < quality_threshold:  # or abs(self.train_position) < 3:
                 # close the window
                 self.logger.info(
@@ -524,7 +525,6 @@ class Render_one:
             # ImageCombモードの場合、canvas.get_image()は重い（全体結合）
             # PyQt6では、update_windowにNoneを渡してcanvasを直接参照させる
             use_imagecomb = isinstance(self.canvas, ImageComb)
-
             if use_imagecomb:
                 # ImageCombモード: ウィンドウに通知だけ（画像は渡さない）
                 if self.window_manager:
@@ -653,6 +653,52 @@ class Render_one:
             "scaling_factor": float(self.scaling_factor),
             "history": history_data,
         }
+
+    def save(self, base_path=None):
+        """
+        画像とstitching履歴を保存する（メモリ効率的）
+
+        【目的】
+        - stitch.pyなど、WindowManagerを使わない環境でも保存できるようにする
+        - ImageComb.save_to_file()を使ってメモリ効率的に保存
+
+        【保存されるファイル】
+        - {base_path}.jpg: stitchされた画像
+        - {base_path}.tspos2: stitching履歴（JSON形式）
+
+        Args:
+            base_path: ファイルのベースパス（拡張子なし）
+                      Noneの場合、video_path + "_" + id を使用
+        """
+        # ベースパスを決定
+        if base_path is None:
+            if self.video_path:
+                video_base = os.path.splitext(self.video_path)[0]
+                base_path = f"{video_base}_{self.id}"
+            else:
+                base_path = f"train_scan_{self.id}"
+
+        image_path = f"{base_path}.jpg"
+        history_path = f"{base_path}.tspos2"
+
+        # 画像を保存（メモリ効率的）
+        if isinstance(self.canvas, ImageComb):
+            self.logger.info(f"Saving image to {image_path} (memory-efficient mode)...")
+            self.canvas.save_to_file(image_path)
+        else:
+            # 従来のSimpleImage形式
+            img = self.canvas.get_image()
+            if img is not None:
+                cv2.imwrite(image_path, img)
+                self.logger.info(f"Saved image to {image_path}")
+
+        # stitching履歴を保存
+        history_data = self.export_history()
+        with open(history_path, "w", encoding="utf-8") as f:
+            json.dump(history_data, f, indent=2, ensure_ascii=False)
+        self.logger.info(f"Saved history to {history_path}")
+
+        return image_path, history_path
 
 
 if PYQT6_AVAILABLE:

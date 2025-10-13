@@ -42,7 +42,9 @@ class AntiShaker2:
         frame0_extend[
             self._velocity : -self._velocity, self._velocity : -self._velocity
         ] = self._last_frame
-        scores = cv2.matchTemplate(frame0_extend, frame_std * mask, cv2.TM_CCORR)
+        # frame_std と mask を明示的にfloat32に変換してから掛け算
+        template = np.multiply(frame_std.astype(np.float32), mask.astype(np.float32))
+        scores = cv2.matchTemplate(frame0_extend, template, cv2.TM_CCORR)
         # print(scores)
         _, _, _, max_loc = cv2.minMaxLoc(scores)
         dx, dy = (max_loc[0] - self._velocity, max_loc[1] - self._velocity)
