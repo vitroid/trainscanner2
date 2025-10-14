@@ -216,7 +216,7 @@ def main():
         vl.seek(47 * 30)
 
     with Storer("motions_test.json") as storer:
-        for frame_index, absolute_position, matchscore in analyze_iter(
+        for frame_index, absolute_position, matchscore, _ in analyze_iter(
             vl, scaling_ratio=1.0
         ):
             storer.append(frame_index, absolute_position, matchscore)
