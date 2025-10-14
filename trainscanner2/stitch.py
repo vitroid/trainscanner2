@@ -4,9 +4,11 @@
 import cv2
 import numpy as np
 import sys
+import argparse
 from logging import getLogger, DEBUG, INFO, basicConfig
 import json
 import os
+from tqdm import tqdm
 
 # from sklearn.mixture import GaussianMixture
 from trainscanner2.antishake import AntiShaker2
@@ -17,14 +19,20 @@ from trainscanner.image import MatchScore
 from trainscanner2 import FIFO
 from trainscanner2.analyze import normalize, BlurMask
 from trainscanner2.render import PathItem, WindowManager
+from trainscanner2.detect import Path
 
 # DEBUG表示を有効にするかどうか（環境変数で制御）
 SHOW_DEBUG_WINDOWS = os.environ.get("TRAINSCANNER_DEBUG", "0") == "1"
 
 
-def analyze_iter(vl, tspos2: dict):
+def analyze_iter(vl, tspos2: dict, show_progress=False):
     """
     動画を読み込んで、各フレームをずらして自分自身と重ねあわせ、そのスコア(2次元行列)を返す。
+
+    Args:
+        vl: 動画ローダー
+        tspos2: tspos2データ
+        show_progress: 進捗表示するかどうか
     """
     logger = getLogger(__name__)
 
@@ -36,9 +44,16 @@ def analyze_iter(vl, tspos2: dict):
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
     antishaker = AntiShaker2(velocity=magnify)
+    damping = 0.05
+    dumped = None
 
     mask = None
-    for frame_info in tspos2["history"]:
+
+    # 進捗表示の設定
+    history_items = tspos2["history"]
+    progress_bar = tqdm(history_items, desc="Processing frames", unit="frame")
+
+    for frame_info in progress_bar:
         frame_index = frame_info["frame_index"]
         while vl.head < frame_index:
             vl.skip()
@@ -157,6 +172,16 @@ def analyze_iter(vl, tspos2: dict):
         dx += matchscore.dx[max_loc[0]]
         dy += matchscore.dy[max_loc[1]]
 
+        if dumped is None:
+            dumped = np.array((dx, dy))
+        else:
+            dumped = dumped * (1 - damping) + np.array((dx, dy)) * damping
+            if show_progress:
+                print(
+                    f"Frame {frame_index}: raw=({dx:.2f}, {dy:.2f}), smoothed=({dumped[0]:.2f}, {dumped[1]:.2f})"
+                )
+            dx, dy = dumped
+
         logger.debug(f"frame_index={frame_index}")
         logger.debug(
             f"Rough: delta=({frame_info['delta_x'] * magnify:.2f}, "
@@ -190,37 +215,79 @@ def analyze_iter(vl, tspos2: dict):
 def main():
     from trainscanner2.render import Render_one
 
-    basicConfig(level=INFO)
+    # コマンドライン引数の解析
+    parser = argparse.ArgumentParser(description="高精細画像のstitching")
+    parser.add_argument("tspos2file", nargs="?", help="tspos2ファイルのパス")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="詳細な進捗表示とウィンドウ表示"
+    )
+    args = parser.parse_args()
+
+    # ログレベルを設定
+    if args.verbose:
+        basicConfig(level=DEBUG)
+    else:
+        basicConfig(level=INFO)
+
     # 動画を読み込む
-    if len(sys.argv) < 2:
+    if args.tspos2file:
+        tspos2file = args.tspos2file
+    else:
+        # デフォルトファイル（開発用）
         tspos2file = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Kyushu/3397/IMG_3397_1.tspos2"
         tspos2file = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Sapporo/C0085_trimmed_0.tspos2"
         tspos2file = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Locals/Sanyo Yellow/IMG_0401_0.tspos2"
-    else:
-        tspos2file = sys.argv[1]
     with open(tspos2file, "r") as f:
         tspos2 = json.load(f)
     videofile = tspos2["video_path"]
+    # videofileのファイル名だけを採用し、パスはtspos2fileのものを利用する(tspos2とmovが同じパスになることを仮定)
+    videofile = os.path.basename(videofile)
+    tspos2path = os.path.dirname(tspos2file)
+    videofile = os.path.join(tspos2path, videofile)
+    if args.verbose:
+        print(f"Video file: {videofile}")
     vl = video_loader_factory(videofile)
 
     scaling_factor = tspos2["scaling_factor"]
+
+    # ウィンドウ表示の設定
+    window_manager = None
+    if args.verbose:
+        # -vオプションがある場合のみウィンドウを表示（ボタンは不要）
+        window_manager = WindowManager(
+            video_base=videofile,
+            show_buttons=False,  # ボタンは表示しない
+        )
+
     render = Render_one(
-        id=0, num_leading_frames=1, window_manager=WindowManager(video_base=videofile)
+        id=0,
+        num_leading_frames=1,
+        window_manager=window_manager,
+        scaling_factor=1.0 / scaling_factor,  # 高解像度への変換係数
+        video_path=videofile,
     )
 
+    # 処理開始のメッセージ
+    if args.verbose:
+        print(f"Starting high-resolution stitching...")
+        print(f"Total frames to process: {len(tspos2['history'])}")
+
     for frame_index, delta, absolute_position, max_val, unblurred_frame in analyze_iter(
-        vl, tspos2=tspos2
+        vl, tspos2=tspos2, show_progress=args.verbose
     ):
         render.put(
             unblurred_frame,
             PathItem(xy=delta, value=(frame_index, max_val)),
             absolute_position=absolute_position,
         )
+
     # 最後に、stitchした大画像を保存する（メモリ効率的）
     # tspos2ファイル名から出力ファイル名を生成
     # 例: IMG_0401_0.tspos2 -> IMG_0401_0_hires.jpg
     base_path = os.path.splitext(tspos2file)[0] + "_hires"
+    print(f"Saving high-resolution image to {base_path}.jpg...")
     render.save(base_path=base_path)
+    print("Done!")
 
 
 if __name__ == "__main__":

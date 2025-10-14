@@ -81,6 +81,7 @@ if PYQT6_AVAILABLE:
             close_callback=None,  # ウィンドウが閉じられたときにRenderに通知するコールバック
             render_one=None,  # Render_oneインスタンス（履歴保存用）
             show_gaps=False,  # デバッグ用: 短冊間に1px隙間を表示
+            show_buttons=True,  # 保存・閉じるボタンを表示するか
             parent=None,
         ):
             super().__init__(parent)
@@ -127,27 +128,29 @@ if PYQT6_AVAILABLE:
             self.scroll_area.setWidget(self.image_label)
             self.scroll_area.setVisible(False)  # ImageComb使用時は非表示
 
-            # ボタンを配置するレイアウト
-            button_layout = QHBoxLayout()
-
-            # 保存ボタン
-            self.save_button = QPushButton("保存")
-            self.save_button.clicked.connect(self.save_image)
-            button_layout.addWidget(self.save_button)
-
-            # 閉じるボタン
-            self.close_button = QPushButton("閉じる")
-            self.close_button.clicked.connect(self.close)
-            button_layout.addWidget(self.close_button)
-
             # レイアウトに追加
             # ImageComb用（デフォルト表示）
             main_layout.addWidget(self.image_comb_widget)
             main_layout.addWidget(self.h_scrollbar)
             # 従来の表示用（非表示）
             main_layout.addWidget(self.scroll_area)
-            # ボタン
-            main_layout.addLayout(button_layout)
+
+            # ボタンを配置するレイアウト（show_buttons=Trueの場合のみ）
+            if show_buttons:
+                button_layout = QHBoxLayout()
+
+                # 保存ボタン
+                self.save_button = QPushButton("保存")
+                self.save_button.clicked.connect(self.save_image)
+                button_layout.addWidget(self.save_button)
+
+                # 閉じるボタン
+                self.close_button = QPushButton("閉じる")
+                self.close_button.clicked.connect(self.close)
+                button_layout.addWidget(self.close_button)
+
+                # ボタンをレイアウトに追加
+                main_layout.addLayout(button_layout)
 
             self.setCentralWidget(main_widget)
 
@@ -374,6 +377,8 @@ if PYQT6_AVAILABLE:
                         json.dump(history_data, f, indent=2, ensure_ascii=False)
 
                 # 保存成功のメッセージは表示しない（ワンクリック操作を維持）
+                # 保存が成功したらウィンドウを閉じる
+                self.close()
             except Exception as e:
                 QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
 
@@ -719,7 +724,11 @@ if PYQT6_AVAILABLE:
         logger = getLogger(__name__)
 
         def __init__(
-            self, video_base: str = None, renderer_callback=None, show_gaps=False
+            self,
+            video_base: str = None,
+            renderer_callback=None,
+            show_gaps=False,
+            show_buttons=True,  # ウィンドウに保存・閉じるボタンを表示するか
         ):
             try:
                 # QApplicationのインスタンスを取得または作成（必須）
@@ -730,6 +739,7 @@ if PYQT6_AVAILABLE:
                 self.windows = {}  # window_id -> ImageWindow
                 self.video_base = video_base or "train_scan"
                 self.show_gaps = show_gaps  # デバッグ用: 短冊間に隙間を表示
+                self.show_buttons = show_buttons  # 保存・閉じるボタンを表示するか
                 self.renderer_callback = (
                     renderer_callback  # ウィンドウが閉じられたときにRenderに通知
                 )
@@ -801,6 +811,7 @@ if PYQT6_AVAILABLE:
                     close_callback=self._on_window_closed,
                     render_one=render_one,
                     show_gaps=self.show_gaps,  # デバッグ用
+                    show_buttons=self.show_buttons,  # ボタン表示設定
                 )
                 window.show()
                 self.windows[window_id] = window
@@ -873,6 +884,7 @@ class Render:
         video_path: str = None,
         scaling_factor: float = 1.0,
         show_gaps=False,
+        show_buttons=True,  # ウィンドウに保存・閉じるボタンを表示するか
     ):
         self.renderers = {}  # {id: Render_one} 全Path（active/finished両方）
         self.max_quality = 0.0
@@ -902,6 +914,7 @@ class Render:
                         video_base=video_base,
                         renderer_callback=self.remove_renderer,
                         show_gaps=show_gaps,  # デバッグ用
+                        show_buttons=show_buttons,  # ボタン表示設定
                     )
                 except Exception as e:
                     self.logger.warning(

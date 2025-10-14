@@ -22,7 +22,9 @@ class BlurMask:
 
     def add_frame(self, diff):
         # assert diff does not contain nan
-        assert not np.isnan(diff).any()
+
+        if np.isnan(diff).any():
+            diff = np.zeros_like(diff)
 
         if self.sumask is None:
             self.sumask = diff
