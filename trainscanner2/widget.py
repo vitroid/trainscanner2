@@ -1,7 +1,7 @@
 """
 PyQt6用のカスタムウィジェット
 
-ImageCombを効率的に表示するための仮想スクロール対応ウィジェット
+ImageStripsを効率的に表示するための仮想スクロール対応ウィジェット
 """
 
 import numpy as np
@@ -36,9 +36,9 @@ def cv2_to_qpixmap(cv_img):
 
 if PYQT6_AVAILABLE:
 
-    class ImageCombWidget(QWidget):
+    class ImageStripsWidget(QWidget):
         """
-        ImageCombを効率的に表示するウィジェット
+        ImageStripsを効率的に表示するウィジェット
 
         【目的】
         - 巨大な画像を全て結合して表示するのではなく、可視範囲だけをレンダリング
@@ -57,40 +57,40 @@ if PYQT6_AVAILABLE:
 
         def __init__(self, show_gaps=False, parent=None):
             super().__init__(parent)
-            self.image_comb = None  # ImageCombインスタンス
+            self.imagestrips = None  # ImageStripsインスタンス
             self.current_start_index = 0  # 表示開始位置（imagesのインデックス）
             self.scroll_offset = 0  # 画像内のピクセルオフセット
             self.cached_pixmap = None  # キャッシュされた表示画像
             self.total_width = 0  # 全体の幅（スクロールバー用）
-            self.image_widths = []  # 各画像の幅（累積）
+            # self.image_widths = []  # 各画像の幅（累積）
             self.show_gaps = show_gaps  # 短冊間の隙間を表示するか
             self.setMinimumSize(400, 300)
 
         def _calculate_widths(self):
             """各画像の幅と累積幅を計算"""
-            if self.image_comb is None:
+            if self.imagestrips is None:
                 return
 
             self.image_widths = []
             cumulative = 0
-            for img in self.image_comb.images:
-                cumulative += img.shape[1]
-                # show_gapsがTrueの場合、短冊の後に1px隙間を追加
+            for shape in self.imagestrips.shapes:
+                h, w = shape[:2]
+                cumulative += w
                 if self.show_gaps:
-                    cumulative += 1
+                    cumulative += 1  # 隙間分を加算
                 self.image_widths.append(cumulative)
 
             # 全体の幅
             self.total_width = cumulative
             if (
-                self.image_comb.buffer is not None
-                and self.image_comb.buffer.image is not None
+                self.imagestrips.buffer is not None
+                and self.imagestrips.buffer.image is not None
             ):
-                self.total_width += self.image_comb.buffer.image.shape[1]
+                self.total_width += self.imagestrips.buffer.image.shape[1]
 
-        def set_image_comb(self, image_comb):
-            """ImageCombをセットして表示を更新"""
-            self.image_comb = image_comb
+        def set_imagestrips(self, imagestrips):
+            """ImageStripsをセットして表示を更新"""
+            self.imagestrips = imagestrips
             self._calculate_widths()
             self.update_display()
 
@@ -104,27 +104,37 @@ if PYQT6_AVAILABLE:
             if not self.image_widths:
                 return
 
+            logger = getLogger(__name__)
+
             # ピクセル位置から画像インデックスを計算
             for idx, cumulative_width in enumerate(self.image_widths):
                 if position < cumulative_width:
-                    self.current_start_index = max(0, idx - 1)
+                    # このインデックスの画像を表示開始位置とする
+                    self.current_start_index = idx
                     prev_width = self.image_widths[idx - 1] if idx > 0 else 0
                     self.scroll_offset = position - prev_width
+                    logger.debug(
+                        f"Scroll position {position} -> start_index={idx}, offset={self.scroll_offset}"
+                    )
                     break
             else:
                 # 最後の画像
                 self.current_start_index = max(0, len(self.image_widths) - 1)
+                self.scroll_offset = 0
+                logger.debug(
+                    f"Scroll position {position} -> last image (index={self.current_start_index})"
+                )
 
             self.update_display()
 
         def update_display(self, start_index=None):
             """
-            表示を更新（ImageComb.get_image()を使用）
+            表示を更新（ImageStrips.get_image()を使用）
 
             Args:
                 start_index: 表示開始位置（Noneの場合は現在位置を維持）
             """
-            if self.image_comb is None:
+            if self.imagestrips is None:
                 return
 
             if start_index is not None:
@@ -134,15 +144,15 @@ if PYQT6_AVAILABLE:
             widget_width = self.width()
             request_width = int(widget_width * 1.5)
 
-            # ImageComb.get_image()を使って可視範囲を取得
-            combined = self.image_comb.get_image(
+            # ImageStrips.get_image()を使って可視範囲を取得
+            combined = self.imagestrips.get_image(
                 start=self.current_start_index, width=request_width
             )
 
             if combined is not None:
                 # show_gapsがTrueの場合、短冊間に隙間を追加
-                # TODO: ImageComb.get_image()にshow_gaps引数を追加して、
-                # ImageComb側で隙間を入れるようにする
+                # TODO: ImageStrips.get_image()にshow_gaps引数を追加して、
+                # ImageStrips側で隙間を入れるようにする
                 # 現状は隙間なしで表示（既に結合された画像には後から隙間を入れられない）
 
                 self.cached_pixmap = cv2_to_qpixmap(combined)
@@ -150,13 +160,13 @@ if PYQT6_AVAILABLE:
             # 全体の幅を計算（スクロールバー用）
             self.total_width = sum(
                 img.shape[1] + (1 if self.show_gaps else 0)  # 隙間分を加算
-                for img in self.image_comb.images
+                for img in self.imagestrips.images
             )
             if (
-                self.image_comb.buffer is not None
-                and self.image_comb.buffer.image is not None
+                self.imagestrips.buffer is not None
+                and self.imagestrips.buffer.image is not None
             ):
-                self.total_width += self.image_comb.buffer.image.shape[1]
+                self.total_width += self.imagestrips.buffer.image.shape[1]
 
             self.update()
 
@@ -173,16 +183,16 @@ if PYQT6_AVAILABLE:
             return super().sizeHint()
 
 else:
-    ImageCombWidget = None
+    ImageStripsWidget = None
 
 
 def main():
     """
-    ImageCombWidgetのテストケース
+    ImageStripsWidgetのテストケース
 
     【テスト内容】
-    - ImageCombに複数の短冊画像を追加
-    - ImageCombWidgetで表示
+    - ImageStripsに複数の短冊画像を追加
+    - ImageStripsWidgetで表示
     - 短冊間の1px隙間を確認（show_gaps=True）
 
     【終了方法】
@@ -193,12 +203,12 @@ def main():
         print("PyQt6 is not installed. Test skipped.")
         return
 
-    from trainscanner2.imagecomb import ImageComb
+    from trainscanner2.imagecomb import ImageStrips
     from pyperbox import Rect
     import sys
     import signal
 
-    print("ImageCombWidgetテストを開始します...")
+    print("ImageStripsWidgetテストを開始します...")
 
     # Ctrl-C で確実に終了できるようにする
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -209,9 +219,9 @@ def main():
         # アプリケーションが最後のウィンドウを閉じたときに終了するように設定
         app.setQuitOnLastWindowClosed(True)
 
-        # テスト用ImageCombを作成
-        image_comb = ImageComb()
-        print(f"ImageComb created: {len(image_comb.images)} images")
+        # テスト用ImageStripsを作成
+        imagestrips = ImageStrips()
+        print(f"ImageStrips created: {len(imagestrips.images)} images")
 
         # カラフルな短冊画像を追加
         colors = [
@@ -239,7 +249,7 @@ def main():
                 2,
             )
 
-            # ImageCombに追加（左から右へ）
+            # ImageStripsに追加（左から右へ）
             rect = Rect.from_bounds(
                 left=i * 100,
                 right=(i + 1) * 100,
@@ -247,20 +257,20 @@ def main():
                 bottom=150,
             )
             print(f"Adding image {i}, rect: {rect}")
-            image_comb.put_image(rect, img)
+            imagestrips.put_image(rect, img)
 
-        print(f"ImageComb after adding: {len(image_comb.images)} images")
+        print(f"ImageStrips after adding: {len(imagestrips.images)} images")
 
         # ウィンドウを作成
         window = QMainWindow()
-        window.setWindowTitle("ImageCombWidget Test - Close window to exit")
+        window.setWindowTitle("ImageStripsWidget Test - Close window to exit")
         window.resize(600, 400)
 
-        # ImageCombWidgetを作成（隙間を表示）
-        print("Creating ImageCombWidget...")
-        widget = ImageCombWidget(show_gaps=True)
-        print("Setting image_comb...")
-        widget.set_image_comb(image_comb)
+        # ImageStripsWidgetを作成（隙間を表示）
+        print("Creating ImageStripsWidget...")
+        widget = ImageStripsWidget(show_gaps=True)
+        print("Setting imagestrips...")
+        widget.set_imagestrips(imagestrips)
 
         window.setCentralWidget(widget)
         window.show()

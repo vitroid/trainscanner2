@@ -1,74 +1,84 @@
 # 縦に長い画像の集合体で巨大画像を表現するClass
+from re import S
 from pyperbox import Rect
 import numpy as np
-from tiledimage.simpleimage import SimpleImage
+from trainscanner2.imagerect import ImageRect
 import cv2
 import tempfile
 import os
 from logging import getLogger
+import shutil
 
 
-class ImageComb:
+class ImageStrips:
     logger = getLogger(__name__)
 
-    def __init__(self):
+    def __init__(self, cache=False):
         # 辞書のキーはtrain_position
+        self.buffer = ImageRect()
+        if cache:
+            self.cache_dir = tempfile.mkdtemp()
+        else:
+            self.cache_dir = None
+        self.shapes = []
         self.images = []
-        self.buffer = SimpleImage()
 
-    def put_image(
+    def __del__(self):
+        if self.cache_dir is not None:
+            shutil.rmtree(self.cache_dir)
+
+    def put_image(self, lefttop: tuple[int, int], image: np.ndarray):
+        self.put_imagerect(ImageRect(lefttop=lefttop, image=image))
+
+    def put_imagerect(
         self,
-        rect: Rect,
-        image,
+        imagerect: ImageRect,
     ):
         """
         画像を追加する
 
+        imagerectの右半分を、self.bufferに重ねる。
+        常に右にずれた場所に画像を重ねるので、imagerectの中央よりも左側の領域はこのあと変更される可能性がないのでメモリーからpurgeする。
+        右部分はself.bufferに残す。
         """
-        height, width = image.shape[:2]
-        lefthalf = image[:, : width // 2]
-        righthalf = image[:, width // 2 :]
-        rect_righthalf = Rect.from_bounds(
-            left=rect.left + rect.width // 2,
-            right=rect.right,
-            top=rect.top,
-            bottom=rect.bottom,
-        )
-        if self.buffer.rect is None:
-            self.buffer.put_image((rect_righthalf.left, rect_righthalf.top), righthalf)
-            self.images.append(lefthalf)
+        center = imagerect.left + imagerect.width // 2
+        if self.buffer.image is None:
+            lefthalf, righthalf = imagerect.split_vertically(imagerect.width // 2)
+            self.buffer.put_imagerect(righthalf)
+            if self.cache_dir is not None:
+                filename = self.cache_dir + f"/{len(self.images):05d}.png"
+                cv2.imwrite(filename, lefthalf.image)
+                self.images.append(filename)
+            else:
+                self.images.append(lefthalf.image)
+            self.shapes.append(lefthalf.shape)
             return
-        if self.buffer.rect.left < rect_righthalf.left:
+        if self.buffer.left < center:
             # 移動があった。
-            # 移動した部分は保存する。
-            new_rect = self.buffer.rect | rect_righthalf
-            new_buffer = SimpleImage()
+            displacement = center - self.buffer.left
+            alpha = np.concatenate(
+                (np.linspace(0, 1.0, displacement), np.ones(imagerect.width // 2))
+            )
+            elim = imagerect.width - alpha.shape[0]
+            _, overlay = imagerect.split_vertically(elim)
+
+            new_buffer = ImageRect()
+            new_buffer.put_imagerect(self.buffer)
             new_buffer.put_image(
-                (self.buffer.rect.left, self.buffer.rect.top), self.buffer.get_image()
+                lefttop=(overlay.left, overlay.top),
+                image=overlay.image,
+                linear_alpha=alpha,
             )
-            new_buffer.put_image((rect_righthalf.left, rect_righthalf.top), righthalf)
-            assert new_buffer.rect.width == new_buffer.image.shape[1]
-            assert new_buffer.rect.height == new_buffer.image.shape[0]
             # いまはスムーズにつながなくていい
-            displacement = rect_righthalf.left - self.buffer.rect.left
-            self.buffer = SimpleImage()
-            rect = Rect.from_bounds(
-                left=new_rect.left + displacement,
-                right=new_rect.right,
-                top=new_rect.top,
-                bottom=new_rect.bottom,
-            )
-            self.buffer.put_image(
-                (rect.left, rect.top), new_buffer.get_image()[:, displacement:]
-            )
-
-            assert rect.width == self.buffer.image.shape[1]
-            assert rect.height == self.buffer.image.shape[0]
-
-            self.images.append(new_buffer.get_image()[:, :displacement])
+            strip, self.buffer = new_buffer.split_vertically(displacement)
+            if self.cache_dir is not None:
+                filename = self.cache_dir + f"/{len(self.images):05d}.png"
+                cv2.imwrite(filename, strip.image)
+                self.images.append(filename)
+            else:
+                self.images.append(strip.image)
+            self.shapes.append(strip.shape)
             return
-
-            # self.right_endの上に、imageを重ねる。この時、画像の高さも変わる可能性があることに注意。
 
     def get_image(self, start=0, width=None):
         """
@@ -85,39 +95,44 @@ class ImageComb:
         Returns:
             np.ndarray: 結合された画像、またはNone（画像がない場合）
         """
-        if not self.images and self.buffer is None:
+        self.logger.debug(f"get_image(start={start}, width={width})")
+        if len(self.images) == 0 and self.buffer is None:
             return None
 
         # bufferだけの場合
-        if not self.images and self.buffer is not None:
+        if len(self.images) == 0 and self.buffer is not None:
             return self.buffer.image if self.buffer.image is not None else None
 
         if len(self.images) <= start:
             return None
 
         # imagesを横に連結
-        if self.images:
+        if len(self.images) > 0:
             # すべての画像（images + buffer）を集める
-            all_images = list(self.images)[start:]
-            total_width = sum(img.shape[1] for img in all_images)
+            # all_images = [self.images[i] for i in range(start, len(self.images))]
+            total_width = sum([x[1] for x in self.shapes[start:]])
             if (
                 self.buffer is not None
                 and self.buffer.image is not None
                 and width is not None
                 and total_width < width
             ):
-                all_images.append(self.buffer.image)
+                # all_images.append(self.buffer.image)
                 total_width += self.buffer.image.shape[1]
 
-            if not all_images:
-                return None
+            # if not all_images:
+            #     return None
             # 最大の高さを取得
-            max_height = max(img.shape[0] for img in all_images)
+            max_height = max([x[0] for x in self.shapes[start:]])
 
             # 高さを揃える（上下中央にパディング）
             padded_images = []
-            for img in all_images:
+            accum = 0
+            for img in self.images[start:]:
+                if self.cache_dir is not None:
+                    img = cv2.imread(img)
                 h, w = img.shape[:2]
+                accum += w
                 if h < max_height:
                     # パディングが必要
                     pad_top = (max_height - h) // 2
@@ -135,10 +150,15 @@ class ImageComb:
                     padded_images.append(padded)
                 else:
                     padded_images.append(img)
+                if width is not None and accum >= width:
+                    break
+            else:
+                padded_images.append(self.buffer.image)
 
-            # 横に連結
-            combined = np.hstack(padded_images)
-            return combined
+            if len(padded_images) > 0:
+                # 横に連結
+                combined = np.hstack(padded_images)
+                return combined
 
         return None
 
@@ -162,18 +182,22 @@ class ImageComb:
             return
 
         # 全体のサイズを計算
-        all_images = list(self.images)
+        # ここで全画像を読みこむのでメモリーがたくさん必要になる。
+        # all_images = list(self.images.values())
+        # if self.buffer is not None and self.buffer.image is not None:
+        #     all_images.append(self.buffer.image)
+
+        # if not all_images:
+        #     return
+
+        total_width = sum([x[1] for x in self.shapes])
+        max_height = max([x[0] for x in self.shapes])
         if self.buffer is not None and self.buffer.image is not None:
-            all_images.append(self.buffer.image)
-
-        if not all_images:
-            return
-
-        total_width = sum(img.shape[1] for img in all_images)
-        max_height = max(img.shape[0] for img in all_images)
+            total_width += self.buffer.image.shape[1]
+            max_height = max(max_height, self.buffer.image.shape[0])
 
         # カラーかグレースケールかを判定
-        channels = 3 if len(all_images[0].shape) == 3 else 1
+        channels = 3 if len(self.shapes[0]) == 3 else 1
         shape = (
             (max_height, total_width, channels)
             if channels == 3
@@ -191,7 +215,9 @@ class ImageComb:
 
             # 短冊ごとにコピー（メモリ効率的）
             x_offset = 0
-            for img in all_images:
+            for img in self.images:
+                if self.cache_dir is not None:
+                    img = cv2.imread(img)
                 h, w = img.shape[:2]
                 # 高さを中央に配置
                 y_offset = (max_height - h) // 2
@@ -205,6 +231,19 @@ class ImageComb:
 
                 # メモリマップをフラッシュ（ディスクに書き込む）
                 combined.flush()
+
+            if self.buffer is not None and self.buffer.image is not None:
+                h, w = self.buffer.image.shape[:2]
+                y_offset = (max_height - h) // 2
+                if channels == 3:
+                    combined[y_offset : y_offset + h, x_offset : x_offset + w, :] = (
+                        self.buffer.image
+                    )
+                else:
+                    combined[y_offset : y_offset + h, x_offset : x_offset + w] = (
+                        self.buffer.image
+                    )
+                x_offset += w
 
             # 最終的な保存（この時点でメモリが必要になるが、OSのキャッシュを活用）
             # cv2.imwriteはnumpy配列を受け取るため、memmapも使える
