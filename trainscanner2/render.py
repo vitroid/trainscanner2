@@ -1,7 +1,7 @@
 import numpy as np
 from tiledimage.simpleimage import SimpleImage
 from trainscanner.image import linear_alpha
-from trainscanner2.imagecomb import ImageComb
+from trainscanner2.imagestrips import ImageStrips
 import cv2
 from logging import getLogger
 from trainscanner2 import FIFO, PathItem
@@ -54,9 +54,9 @@ if PYQT6_AVAILABLE:
         QScrollBar,
     )
     from PyQt6.QtGui import QShortcut, QKeySequence
-    from trainscanner2.widget import ImageCombWidget
+    from trainscanner2.widget import ImageStripsWidget
 
-    # ImageCombWidgetはwidget.pyに移動しました
+    # ImageStripsWidgetはwidget.pyに移動しました
 
     class ImageWindow(QMainWindow):
         """
@@ -73,6 +73,8 @@ if PYQT6_AVAILABLE:
         - repaint() + processEvents() で強制的に再描画
         - これにより、影だけでなく実際の内容が表示されるようになった
         """
+
+        logger = getLogger(__name__)
 
         def __init__(
             self,
@@ -105,8 +107,8 @@ if PYQT6_AVAILABLE:
             main_layout = QVBoxLayout()
             main_widget.setLayout(main_layout)
 
-            # ImageComb用の表示ウィジェット（仮想スクロール）
-            self.image_comb_widget = ImageCombWidget(show_gaps=show_gaps)
+            # ImageStrips用の表示ウィジェット（仮想スクロール）
+            self.imagestrips_widget = ImageStripsWidget(show_gaps=show_gaps)
 
             # カスタム横スクロールバー
             self.h_scrollbar = QScrollBar(Qt.Orientation.Horizontal)
@@ -114,7 +116,7 @@ if PYQT6_AVAILABLE:
             self.h_scrollbar.setVisible(False)  # 初期は非表示
 
             # 従来のシンプル表示用（後方互換性）
-            # ImageCombではなく通常の画像を表示する場合に使用
+            # ImageStripsではなく通常の画像を表示する場合に使用
             self.scroll_area = QScrollArea()
             self.scroll_area.setWidgetResizable(False)
             self.scroll_area.setHorizontalScrollBarPolicy(
@@ -126,11 +128,11 @@ if PYQT6_AVAILABLE:
             self.image_label = QLabel()
             self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.scroll_area.setWidget(self.image_label)
-            self.scroll_area.setVisible(False)  # ImageComb使用時は非表示
+            self.scroll_area.setVisible(False)  # ImageStrips使用時は非表示
 
             # レイアウトに追加
-            # ImageComb用（デフォルト表示）
-            main_layout.addWidget(self.image_comb_widget)
+            # ImageStrips用（デフォルト表示）
+            main_layout.addWidget(self.imagestrips_widget)
             main_layout.addWidget(self.h_scrollbar)
             # 従来の表示用（非表示）
             main_layout.addWidget(self.scroll_area)
@@ -160,33 +162,34 @@ if PYQT6_AVAILABLE:
 
         def _on_scroll(self, value):
             """スクロールバーの値が変更されたときに呼ばれる"""
-            self.image_comb_widget.set_scroll_position(value)
+            self.logger.debug(f"Scroll position changed to: {value}")
+            self.imagestrips_widget.set_scroll_position(value)
 
         def update_image(self, cv_img, force=False):
             """
-            画像を更新する（ImageComb対応版）
+            画像を更新する（ImageStrips対応版）
 
             【動作】
-            - cv_imgではなく、render_one.canvasのImageCombを直接使う
+            - cv_imgではなく、render_one.canvasのImageStripsを直接使う
             - 従来のcv_img表示モードも維持（後方互換性）
             """
-            # ImageCombモードの場合
+            # ImageStripsモードの場合
             if (
                 self.render_one
                 and hasattr(self.render_one, "canvas")
-                and isinstance(self.render_one.canvas, ImageComb)
+                and isinstance(self.render_one.canvas, ImageStrips)
             ):
-                return self.update_image_comb(force=force)
+                return self.update_imagestrips(force=force)
 
             # 従来モード（cv_imgを表示）
             return self._update_image_legacy(cv_img, force=force)
 
-        def update_image_comb(self, force=False):
+        def update_imagestrips(self, force=False):
             """
-            ImageCombモードで画像を更新（更新頻度制限あり）
+            ImageStripsモードで画像を更新（更新頻度制限あり）
 
             【動作】
-            - render_one.canvasのImageCombを使って表示
+            - render_one.canvasのImageStripsを使って表示
             - 可視範囲だけをレンダリング（効率的）
             - 大きな画像全体を結合する必要がない
             """
@@ -200,21 +203,21 @@ if PYQT6_AVAILABLE:
                 and not is_first_update
                 and (current_time - self.last_update_time) < 1.0
             ):
-                return  # ImageCombモードではpending不要（canvasに既に追加されている）
+                return  # ImageStripsモードではpending不要（canvasに既に追加されている）
 
             self.last_update_time = current_time
 
-            # ImageCombウィジェットを表示モードに
-            self.image_comb_widget.setVisible(True)
+            # ImageStripsウィジェットを表示モードに
+            self.imagestrips_widget.setVisible(True)
             self.h_scrollbar.setVisible(True)
             self.scroll_area.setVisible(False)
 
-            # ImageCombを設定して表示
-            self.image_comb_widget.set_image_comb(self.render_one.canvas)
+            # ImageStripsを設定して表示
+            self.imagestrips_widget.set_imagestrips(self.render_one.canvas)
 
             # スクロールバーの範囲を設定
-            total_width = self.image_comb_widget.total_width
-            visible_width = self.image_comb_widget.width()
+            total_width = self.imagestrips_widget.total_width
+            visible_width = self.imagestrips_widget.width()
             if total_width > visible_width:
                 self.h_scrollbar.setMaximum(total_width - visible_width)
                 self.h_scrollbar.setPageStep(visible_width)
@@ -222,7 +225,7 @@ if PYQT6_AVAILABLE:
                 self.h_scrollbar.setMaximum(0)
 
             # 強制的に再描画
-            self.image_comb_widget.repaint()
+            self.imagestrips_widget.repaint()
             QApplication.processEvents()
 
         def _update_image_legacy(self, cv_img, force=False):
@@ -230,7 +233,7 @@ if PYQT6_AVAILABLE:
             従来モードで画像を更新（後方互換性）
 
             【動作】
-            - cv_imgを直接表示（ImageCombを使わない場合）
+            - cv_imgを直接表示（ImageStripsを使わない場合）
             - 従来のQLabelとQScrollAreaを使用
             """
             if cv_img is None:
@@ -253,7 +256,7 @@ if PYQT6_AVAILABLE:
             self.last_update_time = current_time
 
             # 従来表示モードに
-            self.image_comb_widget.setVisible(False)
+            self.imagestrips_widget.setVisible(False)
             self.h_scrollbar.setVisible(False)
             self.scroll_area.setVisible(True)
 
@@ -277,13 +280,13 @@ if PYQT6_AVAILABLE:
             【目的】1秒ごとのタイマーから呼ばれて、保留中の画像を表示
             【効果】更新頻度を抑えつつ、最新の画像も表示できる
             """
-            # ImageCombモードでは常に更新（canvasに既にデータがある）
+            # ImageStripsモードでは常に更新（canvasに既にデータがある）
             if (
                 self.render_one
                 and hasattr(self.render_one, "canvas")
-                and isinstance(self.render_one.canvas, ImageComb)
+                and isinstance(self.render_one.canvas, ImageStrips)
             ):
-                self.update_image_comb(force=True)
+                self.update_imagestrips(force=True)
             # 従来モード
             elif self.pending_image is not None:
                 self._update_image_legacy(self.pending_image, force=True)
@@ -301,7 +304,7 @@ if PYQT6_AVAILABLE:
             【仕様】
             - 画像ファイル名: {動画名}_{ウィンドウID}.jpg
             - 履歴ファイル名: {動画名}_{ウィンドウID}.tspos2 (JSON形式)
-            - ImageCombの場合は全体を結合して保存
+            - ImageStripsの場合は全体を結合して保存
             - ダイアログは表示せず、ワンクリックで保存完了
 
             【.tspos2ファイル形式例】
@@ -342,11 +345,11 @@ if PYQT6_AVAILABLE:
             # 画像を取得
             image_to_save = None
 
-            # ImageCombモードの場合
+            # ImageStripsモードの場合
             if (
                 self.render_one
                 and hasattr(self.render_one, "canvas")
-                and isinstance(self.render_one.canvas, ImageComb)
+                and isinstance(self.render_one.canvas, ImageStrips)
             ):
                 image_to_save = self.render_one.canvas.get_image()
             # 従来モード
@@ -418,20 +421,9 @@ def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
     # 画像中心をそろえる
     # if first:
     canvas.put_image(
-        Rect.from_bounds(
-            left=int(train_position) - rw // 2,
-            right=int(train_position) - rw // 2 + rw,
-            top=-rh // 2,
-            bottom=-rh // 2 + rh,
-        ),
-        rotated,
+        lefttop=(int(train_position) - rw // 2, -rh // 2),
+        image=rotated,
     )
-    # else:
-    #     canvas.put_image(
-    #         (int(train_position) - rw // 2, -rh // 2),
-    #         rotated,
-    #         linear_alpha=alpha,
-    #     )
 
 
 class Render_one:
@@ -448,6 +440,7 @@ class Render_one:
         window_manager=None,
         scaling_factor: float = 1.0,
         video_path: str = None,
+        cache: bool = False,
     ):
         self.num_leading_frames = num_leading_frames
         self.leading_frames = FIFO(num_leading_frames)
@@ -455,7 +448,7 @@ class Render_one:
         self.abs_positions = []  # 各フレームのabsolute_position（手ぶれ補正）
         self.train_positions = []  # 各フレームでのtrain_position（再計算不要に）
         self.id = id
-        self.canvas = ImageComb()
+        self.canvas = ImageStrips(cache=cache)
         self.first = False
         self.train_position = 0
         self.alive = True
@@ -527,11 +520,11 @@ class Render_one:
 
             self._render_one(frame, pathitem)
 
-            # ImageCombモードの場合、canvas.get_image()は重い（全体結合）
+            # ImageStripsモードの場合、canvas.get_image()は重い（全体結合）
             # PyQt6では、update_windowにNoneを渡してcanvasを直接参照させる
-            use_imagecomb = isinstance(self.canvas, ImageComb)
-            if use_imagecomb:
-                # ImageCombモード: ウィンドウに通知だけ（画像は渡さない）
+            use_imagestrips = isinstance(self.canvas, ImageStrips)
+            if use_imagestrips:
+                # ImageStripsモード: ウィンドウに通知だけ（画像は渡さない）
                 if self.window_manager:
                     try:
                         if self.window is None:
@@ -541,7 +534,7 @@ class Render_one:
                         self.window_manager.update_window(self.id, None)  # Noneを渡す
                     except Exception as e:
                         self.logger.error(f"PyQt6 window error: {e}")
-                # OpenCVは非対応（ImageCombの全体画像が必要）
+                # OpenCVは非対応（ImageStripsの全体画像が必要）
             else:
                 # 従来モード: 画像を取得して渡す
                 img = self.canvas.get_image()
@@ -665,7 +658,7 @@ class Render_one:
 
         【目的】
         - stitch.pyなど、WindowManagerを使わない環境でも保存できるようにする
-        - ImageComb.save_to_file()を使ってメモリ効率的に保存
+        - ImageStrips.save_to_file()を使ってメモリ効率的に保存
 
         【保存されるファイル】
         - {base_path}.jpg: stitchされた画像
@@ -687,7 +680,7 @@ class Render_one:
         history_path = f"{base_path}.tspos2"
 
         # 画像を保存（メモリ効率的）
-        if isinstance(self.canvas, ImageComb):
+        if isinstance(self.canvas, ImageStrips):
             self.logger.info(f"Saving image to {image_path} (memory-efficient mode)...")
             self.canvas.save_to_file(image_path)
         else:
