@@ -1,6 +1,4 @@
 import numpy as np
-from tiledimage.simpleimage import SimpleImage
-from trainscanner.image import linear_alpha
 from trainscanner2.imagestrips import ImageStrips
 import cv2
 from logging import getLogger
@@ -414,7 +412,6 @@ def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
             (-sine, cosine, sine * halfw - cosine * halfh + rh / 2),
         )
     )
-    alpha = linear_alpha(img_width=rw, mixing_width=20, slit_pos=0, head_right=False)
     rotated = cv2.warpAffine(frame, R, (rw, rh))
     # cv2.imshow("rotated", rotated)
     # cv2.waitKey(0)
