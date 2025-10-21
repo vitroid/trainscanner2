@@ -15,11 +15,9 @@ from trainscanner2.antishake import AntiShaker2
 from trainscanner.image import match, standardize
 from tiffeditor import Rect
 from trainscanner.video import video_loader_factory
-from trainscanner.image import MatchScore
 from trainscanner2 import FIFO
 from trainscanner2.analyze import normalize, BlurMask
 from trainscanner2.render import PathItem, WindowManager
-from trainscanner2.detect import Path
 
 # DEBUG表示を有効にするかどうか（環境変数で制御）
 SHOW_DEBUG_WINDOWS = os.environ.get("TRAINSCANNER_DEBUG", "0") == "1"
@@ -51,9 +49,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False):
 
     # 進捗表示の設定
     history_items = tspos2["history"]
-    progress_bar = tqdm(history_items, desc="Processing frames", unit="frame")
 
-    for frame_info in progress_bar:
+    for frame_info in tqdm(history_items, desc="Processing frames", unit="frame"):
         frame_index = frame_info["frame_index"]
         while vl.head < frame_index:
             vl.skip()
@@ -265,6 +262,7 @@ def main():
         window_manager=window_manager,
         scaling_factor=1.0 / scaling_factor,  # 高解像度への変換係数
         video_path=videofile,
+        cache=True,
     )
 
     # 処理開始のメッセージ
