@@ -8,21 +8,14 @@ import numpy as np
 import cv2
 from logging import getLogger
 
-try:
-    from PyQt6.QtWidgets import QWidget, QApplication, QMainWindow, QVBoxLayout
-    from PyQt6.QtGui import QImage, QPixmap, QPainter
-    from PyQt6.QtCore import Qt, pyqtSignal
-
-    PYQT6_AVAILABLE = True
-except ImportError:
-    PYQT6_AVAILABLE = False
-    QWidget = QApplication = QMainWindow = QVBoxLayout = None
-    QImage = QPixmap = QPainter = Qt = pyqtSignal = None
+from PyQt6.QtWidgets import QWidget, QApplication, QMainWindow, QVBoxLayout
+from PyQt6.QtGui import QImage, QPixmap, QPainter
+from PyQt6.QtCore import Qt, pyqtSignal
 
 
 def cv2_to_qpixmap(cv_img):
     """OpenCVの画像(BGR)をQPixmapに変換する"""
-    if not PYQT6_AVAILABLE or cv_img is None:
+    if cv_img is None:
         return None
     height, width, channel = cv_img.shape
     bytes_per_line = 3 * width
@@ -34,156 +27,151 @@ def cv2_to_qpixmap(cv_img):
     return QPixmap.fromImage(q_img)
 
 
-if PYQT6_AVAILABLE:
+class ImageStripsWidget(QWidget):
+    """
+    ImageStripsを効率的に表示するウィジェット
 
-    class ImageStripsWidget(QWidget):
+    【目的】
+    - 巨大な画像を全て結合して表示するのではなく、可視範囲だけをレンダリング
+    - imagecomb.imagesの画像番号で表示位置を指定
+    - メモリと処理を節約
+
+    【仮想スクロール】
+    - 画面に表示される範囲の画像だけを結合
+    - スクロール時に動的に再描画
+
+    【デバッグ機能】
+    - show_gaps=True で短冊間に1pxの隙間を表示
+    """
+
+    scroll_changed = pyqtSignal(int)  # スクロール位置変更シグナル
+
+    def __init__(self, show_gaps=False, parent=None):
+        super().__init__(parent)
+        self.imagestrips = None  # ImageStripsインスタンス
+        self.current_start_index = 0  # 表示開始位置（imagesのインデックス）
+        self.scroll_offset = 0  # 画像内のピクセルオフセット
+        self.cached_pixmap = None  # キャッシュされた表示画像
+        self.total_width = 0  # 全体の幅（スクロールバー用）
+        # self.image_widths = []  # 各画像の幅（累積）
+        self.show_gaps = show_gaps  # 短冊間の隙間を表示するか
+        self.setMinimumSize(400, 300)
+
+    def _calculate_widths(self):
+        """各画像の幅と累積幅を計算"""
+        if self.imagestrips is None:
+            return
+
+        self.image_widths = []
+        cumulative = 0
+        for shape in self.imagestrips.shapes:
+            h, w = shape[:2]
+            cumulative += w
+            if self.show_gaps:
+                cumulative += 1  # 隙間分を加算
+            self.image_widths.append(cumulative)
+
+        # 全体の幅
+        self.total_width = cumulative
+        if (
+            self.imagestrips.buffer is not None
+            and self.imagestrips.buffer.image is not None
+        ):
+            self.total_width += self.imagestrips.buffer.image.shape[1]
+
+    def set_imagestrips(self, imagestrips):
+        """ImageStripsをセットして表示を更新"""
+        self.imagestrips = imagestrips
+        self._calculate_widths()
+        self.update_display()
+
+    def set_scroll_position(self, position):
         """
-        ImageStripsを効率的に表示するウィジェット
+        スクロール位置を設定（ピクセル単位）
 
-        【目的】
-        - 巨大な画像を全て結合して表示するのではなく、可視範囲だけをレンダリング
-        - imagecomb.imagesの画像番号で表示位置を指定
-        - メモリと処理を節約
-
-        【仮想スクロール】
-        - 画面に表示される範囲の画像だけを結合
-        - スクロール時に動的に再描画
-
-        【デバッグ機能】
-        - show_gaps=True で短冊間に1pxの隙間を表示
+        Args:
+            position: 左端からのピクセル数
         """
+        if not self.image_widths:
+            return
 
-        scroll_changed = pyqtSignal(int)  # スクロール位置変更シグナル
+        logger = getLogger(__name__)
 
-        def __init__(self, show_gaps=False, parent=None):
-            super().__init__(parent)
-            self.imagestrips = None  # ImageStripsインスタンス
-            self.current_start_index = 0  # 表示開始位置（imagesのインデックス）
-            self.scroll_offset = 0  # 画像内のピクセルオフセット
-            self.cached_pixmap = None  # キャッシュされた表示画像
-            self.total_width = 0  # 全体の幅（スクロールバー用）
-            # self.image_widths = []  # 各画像の幅（累積）
-            self.show_gaps = show_gaps  # 短冊間の隙間を表示するか
-            self.setMinimumSize(400, 300)
-
-        def _calculate_widths(self):
-            """各画像の幅と累積幅を計算"""
-            if self.imagestrips is None:
-                return
-
-            self.image_widths = []
-            cumulative = 0
-            for shape in self.imagestrips.shapes:
-                h, w = shape[:2]
-                cumulative += w
-                if self.show_gaps:
-                    cumulative += 1  # 隙間分を加算
-                self.image_widths.append(cumulative)
-
-            # 全体の幅
-            self.total_width = cumulative
-            if (
-                self.imagestrips.buffer is not None
-                and self.imagestrips.buffer.image is not None
-            ):
-                self.total_width += self.imagestrips.buffer.image.shape[1]
-
-        def set_imagestrips(self, imagestrips):
-            """ImageStripsをセットして表示を更新"""
-            self.imagestrips = imagestrips
-            self._calculate_widths()
-            self.update_display()
-
-        def set_scroll_position(self, position):
-            """
-            スクロール位置を設定（ピクセル単位）
-
-            Args:
-                position: 左端からのピクセル数
-            """
-            if not self.image_widths:
-                return
-
-            logger = getLogger(__name__)
-
-            # ピクセル位置から画像インデックスを計算
-            for idx, cumulative_width in enumerate(self.image_widths):
-                if position < cumulative_width:
-                    # このインデックスの画像を表示開始位置とする
-                    self.current_start_index = idx
-                    prev_width = self.image_widths[idx - 1] if idx > 0 else 0
-                    self.scroll_offset = position - prev_width
-                    logger.debug(
-                        f"Scroll position {position} -> start_index={idx}, offset={self.scroll_offset}"
-                    )
-                    break
-            else:
-                # 最後の画像
-                self.current_start_index = max(0, len(self.image_widths) - 1)
-                self.scroll_offset = 0
+        # ピクセル位置から画像インデックスを計算
+        for idx, cumulative_width in enumerate(self.image_widths):
+            if position < cumulative_width:
+                # このインデックスの画像を表示開始位置とする
+                self.current_start_index = idx
+                prev_width = self.image_widths[idx - 1] if idx > 0 else 0
+                self.scroll_offset = position - prev_width
                 logger.debug(
-                    f"Scroll position {position} -> last image (index={self.current_start_index})"
+                    f"Scroll position {position} -> start_index={idx}, offset={self.scroll_offset}"
                 )
-
-            self.update_display()
-
-        def update_display(self, start_index=None):
-            """
-            表示を更新（ImageStrips.get_image()を使用）
-
-            Args:
-                start_index: 表示開始位置（Noneの場合は現在位置を維持）
-            """
-            if self.imagestrips is None:
-                return
-
-            if start_index is not None:
-                self.current_start_index = start_index
-
-            # 画面幅を取得（少し余裕を持たせる）
-            widget_width = self.width()
-            request_width = int(widget_width * 1.5)
-
-            # ImageStrips.get_image()を使って可視範囲を取得
-            combined = self.imagestrips.get_image(
-                start=self.current_start_index, width=request_width
+                break
+        else:
+            # 最後の画像
+            self.current_start_index = max(0, len(self.image_widths) - 1)
+            self.scroll_offset = 0
+            logger.debug(
+                f"Scroll position {position} -> last image (index={self.current_start_index})"
             )
 
-            if combined is not None:
-                # show_gapsがTrueの場合、短冊間に隙間を追加
-                # TODO: ImageStrips.get_image()にshow_gaps引数を追加して、
-                # ImageStrips側で隙間を入れるようにする
-                # 現状は隙間なしで表示（既に結合された画像には後から隙間を入れられない）
+        self.update_display()
 
-                self.cached_pixmap = cv2_to_qpixmap(combined)
+    def update_display(self, start_index=None):
+        """
+        表示を更新（ImageStrips.get_image()を使用）
 
-            # 全体の幅を計算（スクロールバー用）
-            self.total_width = sum(
-                img.shape[1] + (1 if self.show_gaps else 0)  # 隙間分を加算
-                for img in self.imagestrips.images
-            )
-            if (
-                self.imagestrips.buffer is not None
-                and self.imagestrips.buffer.image is not None
-            ):
-                self.total_width += self.imagestrips.buffer.image.shape[1]
+        Args:
+            start_index: 表示開始位置（Noneの場合は現在位置を維持）
+        """
+        if self.imagestrips is None:
+            return
 
-            self.update()
+        if start_index is not None:
+            self.current_start_index = start_index
 
-        def paintEvent(self, event):
-            """ウィジェットを描画"""
-            if self.cached_pixmap:
-                painter = QPainter(self)
-                painter.drawPixmap(0, 0, self.cached_pixmap)
+        # 画面幅を取得（少し余裕を持たせる）
+        widget_width = self.width()
+        request_width = int(widget_width * 1.5)
 
-        def sizeHint(self):
-            """推奨サイズを返す"""
-            if self.cached_pixmap:
-                return self.cached_pixmap.size()
-            return super().sizeHint()
+        # ImageStrips.get_image()を使って可視範囲を取得
+        combined = self.imagestrips.get_image(
+            start=self.current_start_index, width=request_width
+        )
 
-else:
-    ImageStripsWidget = None
+        if combined is not None:
+            # show_gapsがTrueの場合、短冊間に隙間を追加
+            # TODO: ImageStrips.get_image()にshow_gaps引数を追加して、
+            # ImageStrips側で隙間を入れるようにする
+            # 現状は隙間なしで表示（既に結合された画像には後から隙間を入れられない）
+
+            self.cached_pixmap = cv2_to_qpixmap(combined)
+
+        # 全体の幅を計算（スクロールバー用）
+        self.total_width = sum(
+            img.shape[1] + (1 if self.show_gaps else 0)  # 隙間分を加算
+            for img in self.imagestrips.images
+        )
+        if (
+            self.imagestrips.buffer is not None
+            and self.imagestrips.buffer.image is not None
+        ):
+            self.total_width += self.imagestrips.buffer.image.shape[1]
+
+        self.update()
+
+    def paintEvent(self, event):
+        """ウィジェットを描画"""
+        if self.cached_pixmap:
+            painter = QPainter(self)
+            painter.drawPixmap(0, 0, self.cached_pixmap)
+
+    def sizeHint(self):
+        """推奨サイズを返す"""
+        if self.cached_pixmap:
+            return self.cached_pixmap.size()
+        return super().sizeHint()
 
 
 def main():
@@ -199,11 +187,7 @@ def main():
     - ウィンドウを閉じる（×ボタン、Command-W）
     - Ctrl-C でも終了可能
     """
-    if not PYQT6_AVAILABLE:
-        print("PyQt6 is not installed. Test skipped.")
-        return
-
-    from trainscanner2.imagecomb import ImageStrips
+    from trainscanner2.imagestrips import ImageStrips
     from pyperbox import Rect
     import sys
     import signal
