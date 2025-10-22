@@ -1,12 +1,11 @@
 import numpy as np
-from trainscanner2.imagestrips import ImageStrips
 import cv2
 from logging import getLogger
-from trainscanner2 import FIFO, PathItem
 import os
 import json
 
-# PyQt6ベースのウィンドウ管理をインポート
+from trainscanner2 import FIFO, PathItem
+from trainscanner2.imagestrips import ImageStrips
 from trainscanner2.window import ImageWindow, WindowManager
 
 

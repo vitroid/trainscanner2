@@ -1,8 +1,9 @@
 import sys
 from logging import getLogger, INFO, basicConfig
+
 from trainscanner.video import video_loader_factory
-from trainscanner2.detect import MotionDetector
 from trainscanner2.analyze import analyze_iter
+from trainscanner2.detect import MotionDetector
 from trainscanner2.render import Render
 
 # 縮小画像で照合したあと、GUiで選んで完全解像度のものを再スキャンするか。

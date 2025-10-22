@@ -10,13 +10,12 @@ import json
 import os
 from tqdm import tqdm
 
-# from sklearn.mixture import GaussianMixture
-from trainscanner2.antishake import AntiShaker2
+from pyperbox import Rect
 from trainscanner.image import match, standardize
-from tiffeditor import Rect
 from trainscanner.video import video_loader_factory
 from trainscanner2 import FIFO
 from trainscanner2.analyze import normalize, BlurMask
+from trainscanner2.antishake import AntiShaker2
 from trainscanner2.render import PathItem, WindowManager
 
 # DEBUG表示を有効にするかどうか（環境変数で制御）

@@ -5,12 +5,11 @@ from logging import getLogger, DEBUG, basicConfig
 import json
 
 # from sklearn.mixture import GaussianMixture
-from trainscanner2.antishake import AntiShaker2
-from trainscanner.image import match, standardize
-from tiffeditor import Rect
+from pyperbox import Rect
+from trainscanner.image import match, standardize, MatchScore
 from trainscanner.video import video_loader_factory
-from trainscanner.image import MatchScore
 from trainscanner2 import FIFO
+from trainscanner2.antishake import AntiShaker2
 
 
 # フレーム間の二乗差分を時間平均して、動きの大きい部分を抽出する。

@@ -1,12 +1,13 @@
 # 縦に長い画像の集合体で巨大画像を表現するClass
 from re import S
 import numpy as np
-from trainscanner2.imagerect import ImageRect
 import cv2
 import tempfile
 import os
 from logging import getLogger
 import shutil
+
+from trainscanner2.imagerect import ImageRect
 
 
 class ImageStrips:

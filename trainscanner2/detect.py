@@ -4,11 +4,12 @@
 # 逐次処理できることがわかった。
 from logging import getLogger, basicConfig, INFO
 import json
-from trainscanner.image import MatchScore
 import numpy as np
 import matplotlib.pyplot as plt
-from pyperbox import Rect
 import pykalman
+
+from pyperbox import Rect
+from trainscanner.image import MatchScore
 from trainscanner2 import PathItem
 
 

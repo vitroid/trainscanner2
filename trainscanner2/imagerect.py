@@ -1,7 +1,6 @@
 import logging
-
-# external modules
 import numpy as np
+
 from pyperbox import Rect
 
 
