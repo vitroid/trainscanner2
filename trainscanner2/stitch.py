@@ -129,7 +129,7 @@ def analyze_iter(vl, tspos2: dict, show_progress=False):
         next_masked = antimasked_std_log_gray_next.copy() - std_log_gray_avg  # * mask
 
         # 照合する幅は、delta*magnifyの周囲±magnify
-        max_shift = int(magnify) * 2
+        max_shift = int(magnify)
         # frame_infoには既に現在のhistory要素が入っている
         dx, dy = (
             frame_info["delta_x"] * magnify,

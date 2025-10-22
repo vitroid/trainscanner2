@@ -1,6 +1,5 @@
 # 縦に長い画像の集合体で巨大画像を表現するClass
 from re import S
-from pyperbox import Rect
 import numpy as np
 from trainscanner2.imagerect import ImageRect
 import cv2
@@ -215,7 +214,7 @@ class ImageStrips:
 
             # 短冊ごとにコピー（メモリ効率的）
             x_offset = 0
-            for img in self.images:
+            for i, img in enumerate(self.images):
                 if self.cache_dir is not None:
                     img = cv2.imread(img)
                 h, w = img.shape[:2]
@@ -230,7 +229,8 @@ class ImageStrips:
                 x_offset += w
 
                 # メモリマップをフラッシュ（ディスクに書き込む）
-                combined.flush()
+                if i % 20 == 0:
+                    combined.flush()
 
             if self.buffer is not None and self.buffer.image is not None:
                 h, w = self.buffer.image.shape[:2]
