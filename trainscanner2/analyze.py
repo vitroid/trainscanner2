@@ -8,7 +8,7 @@ import json
 from pyperbox import Rect
 from trainscanner.image import match, standardize, MatchScore
 from trainscanner.video import video_loader_factory
-from trainscanner2 import FIFO
+from trainscanner2 import FIFO, std_hdr
 from trainscanner2.antishake import AntiShaker2
 
 
@@ -106,35 +106,16 @@ def analyze_iter(vl, scaling_ratio=1.0):
             averaged_background += fh
         averaged_background /= len(unblurred_scaled_frame_history.queue)
 
-        std_log_gray_avg = standardize(
-            np.log(
-                cv2.cvtColor(averaged_background, cv2.COLOR_BGR2GRAY).astype(np.float32)
-                + 1
-            )
-        )
+        hdr_avg = std_hdr(averaged_background)
         # グレースケールに変換
         base_frame = unblurred_scaled_frames.queue[0]
         next_frame = unblurred_scaled_frames.queue[1]
 
-        antimasked_std_log_gray_base = (
-            standardize(
-                np.log(
-                    cv2.cvtColor(base_frame, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1
-                )
-            )
-            * antimask
-        )
-        antimasked_std_log_gray_next = (
-            standardize(
-                np.log(
-                    cv2.cvtColor(next_frame, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1
-                )
-            )
-            * antimask
-        )
+        antimasked_hdr_base = std_hdr(base_frame) * antimask
+        antimasked_hdr_next = std_hdr(next_frame) * antimask
 
         # 二乗差分画像を作る
-        diff = (antimasked_std_log_gray_base - antimasked_std_log_gray_next) ** 2
+        diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
         # blurmaskに追加する。maskは平均化されたマスク
         mask = blurmask.add_frame(diff)
 
@@ -144,8 +125,8 @@ def analyze_iter(vl, scaling_ratio=1.0):
 
         # 平均背景をさしひいて、前景を強調する。
         # 今はマスクを使っていない。
-        base_masked = antimasked_std_log_gray_base.copy() - std_log_gray_avg  # * mask
-        next_masked = antimasked_std_log_gray_next.copy() - std_log_gray_avg  # * mask
+        base_masked = antimasked_hdr_base.copy() - hdr_avg  # * mask
+        next_masked = antimasked_hdr_next.copy() - hdr_avg  # * mask
 
         # こんどは移動量をたっぷりとる。
         max_shift = 100

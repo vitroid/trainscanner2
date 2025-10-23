@@ -13,7 +13,7 @@ from tqdm import tqdm
 from pyperbox import Rect
 from trainscanner.image import match, standardize
 from trainscanner.video import video_loader_factory
-from trainscanner2 import FIFO
+from trainscanner2 import FIFO, std_hdr
 from trainscanner2.analyze import normalize, BlurMask
 from trainscanner2.antishake import AntiShaker2
 from trainscanner2.render import PathItem, WindowManager
@@ -22,7 +22,7 @@ from trainscanner2.render import PathItem, WindowManager
 SHOW_DEBUG_WINDOWS = os.environ.get("TRAINSCANNER_DEBUG", "0") == "1"
 
 
-def analyze_iter(vl, tspos2: dict, show_progress=False):
+def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     """
     動画を読み込んで、各フレームをずらして自分自身と重ねあわせ、そのスコア(2次元行列)を返す。
 
@@ -30,6 +30,7 @@ def analyze_iter(vl, tspos2: dict, show_progress=False):
         vl: 動画ローダー
         tspos2: tspos2データ
         show_progress: 進捗表示するかどうか
+        progress_callback: 進捗更新のコールバック関数 (current, total) -> None
     """
     logger = getLogger(__name__)
 
@@ -48,8 +49,17 @@ def analyze_iter(vl, tspos2: dict, show_progress=False):
 
     # 進捗表示の設定
     history_items = tspos2["history"]
+    total_frames = len(history_items)
 
-    for frame_info in tqdm(history_items, desc="Processing frames", unit="frame"):
+    # プログレスバーの設定
+    if show_progress and progress_callback is None:
+        # コールバックがない場合はtqdmを使用
+        progress_iter = tqdm(history_items, desc="Processing frames", unit="frame")
+    else:
+        # コールバックがある場合は通常のイテレータを使用
+        progress_iter = enumerate(history_items)
+
+    for i, frame_info in progress_iter:
         frame_index = frame_info["frame_index"]
         while vl.head < frame_index:
             vl.skip()
@@ -84,35 +94,16 @@ def analyze_iter(vl, tspos2: dict, show_progress=False):
             averaged_background += fh
         averaged_background /= len(unblurred_frame_history.queue)
 
-        std_log_gray_avg = standardize(
-            np.log(
-                cv2.cvtColor(averaged_background, cv2.COLOR_BGR2GRAY).astype(np.float32)
-                + 1
-            )
-        )
+        hdr_avg = std_hdr(averaged_background)
         # グレースケールに変換
         base_frame = unblurred_frames.queue[0]
         next_frame = unblurred_frames.queue[1]
 
-        antimasked_std_log_gray_base = (
-            standardize(
-                np.log(
-                    cv2.cvtColor(base_frame, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1
-                )
-            )
-            * antimask
-        )
-        antimasked_std_log_gray_next = (
-            standardize(
-                np.log(
-                    cv2.cvtColor(next_frame, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1
-                )
-            )
-            * antimask
-        )
+        antimasked_hdr_base = std_hdr(base_frame) * antimask
+        antimasked_hdr_next = std_hdr(next_frame) * antimask
 
         # 二乗差分画像を作る
-        diff = (antimasked_std_log_gray_base - antimasked_std_log_gray_next) ** 2
+        diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
         # blurmaskに追加する。maskは平均化されたマスク
         mask = blurmask.add_frame(diff)
         if SHOW_DEBUG_WINDOWS:
@@ -124,8 +115,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False):
 
         # 平均背景をさしひいて、前景を強調する。
         # 今はマスクを使っていない。
-        base_masked = antimasked_std_log_gray_base.copy() - std_log_gray_avg  # * mask
-        next_masked = antimasked_std_log_gray_next.copy() - std_log_gray_avg  # * mask
+        base_masked = antimasked_hdr_base.copy() - hdr_avg  # * mask
+        next_masked = antimasked_hdr_next.copy() - hdr_avg  # * mask
 
         # 照合する幅は、delta*magnifyの周囲±magnify
         max_shift = int(magnify)
@@ -205,11 +196,65 @@ def analyze_iter(vl, tspos2: dict, show_progress=False):
             cv2.imshow("diff2", diff2)
             cv2.waitKey(0)
 
+        # プログレスコールバックを呼び出し
+        if progress_callback is not None:
+            progress_callback(i + 1, total_frames)
+
         yield frame_index, (dx, dy), abs_loc, max_val, unblurred_frame
 
 
-def main():
+def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
     from trainscanner2.render import Render_one
+
+    with open(tspos2file, "r") as f:
+        tspos2 = json.load(f)
+    videofile = tspos2["video_path"]
+    # videofileのファイル名だけを採用し、パスはtspos2fileのものを利用する(tspos2とmovが同じパスになることを仮定)
+    videofile = os.path.basename(videofile)
+    tspos2path = os.path.dirname(tspos2file)
+    videofile = os.path.join(tspos2path, videofile)
+    if verbose:
+        print(f"Video file: {videofile}")
+    vl = video_loader_factory(videofile)
+
+    scaling_factor = tspos2["scaling_factor"]
+
+    # ウィンドウ表示の設定
+    window_manager = None
+    if verbose:
+        # -vオプションがある場合のみウィンドウを表示（ボタンは不要）
+        window_manager = WindowManager(
+            video_base=videofile,
+            show_buttons=False,  # ボタンは表示しない
+        )
+
+    render = Render_one(
+        id=0,
+        num_leading_frames=1,
+        window_manager=window_manager,
+        scaling_factor=1.0 / scaling_factor,  # 高解像度への変換係数
+        video_path=videofile,
+        cache=True,
+    )
+
+    # 処理開始のメッセージ
+    if verbose:
+        print(f"Starting high-resolution stitching...")
+        print(f"Total frames to process: {len(tspos2['history'])}")
+
+    for frame_index, delta, absolute_position, max_val, unblurred_frame in analyze_iter(
+        vl, tspos2=tspos2, show_progress=verbose, progress_callback=progress_callback
+    ):
+        render.put(
+            unblurred_frame,
+            PathItem(xy=delta, value=(frame_index, max_val)),
+            absolute_position=absolute_position,
+        )
+
+    return render
+
+
+def main():
 
     # コマンドライン引数の解析
     parser = argparse.ArgumentParser(description="高精細画像のstitching")
@@ -233,58 +278,13 @@ def main():
         tspos2file = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Kyushu/3397/IMG_3397_1.tspos2"
         tspos2file = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Sapporo/C0085_trimmed_0.tspos2"
         tspos2file = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Locals/Sanyo Yellow/IMG_0401_0.tspos2"
-    with open(tspos2file, "r") as f:
-        tspos2 = json.load(f)
-    videofile = tspos2["video_path"]
-    # videofileのファイル名だけを採用し、パスはtspos2fileのものを利用する(tspos2とmovが同じパスになることを仮定)
-    videofile = os.path.basename(videofile)
-    tspos2path = os.path.dirname(tspos2file)
-    videofile = os.path.join(tspos2path, videofile)
-    if args.verbose:
-        print(f"Video file: {videofile}")
-    vl = video_loader_factory(videofile)
 
-    scaling_factor = tspos2["scaling_factor"]
-
-    # ウィンドウ表示の設定
-    window_manager = None
-    if args.verbose:
-        # -vオプションがある場合のみウィンドウを表示（ボタンは不要）
-        window_manager = WindowManager(
-            video_base=videofile,
-            show_buttons=False,  # ボタンは表示しない
-        )
-
-    render = Render_one(
-        id=0,
-        num_leading_frames=1,
-        window_manager=window_manager,
-        scaling_factor=1.0 / scaling_factor,  # 高解像度への変換係数
-        video_path=videofile,
-        cache=True,
-    )
-
-    # 処理開始のメッセージ
-    if args.verbose:
-        print(f"Starting high-resolution stitching...")
-        print(f"Total frames to process: {len(tspos2['history'])}")
-
-    for frame_index, delta, absolute_position, max_val, unblurred_frame in analyze_iter(
-        vl, tspos2=tspos2, show_progress=args.verbose
-    ):
-        render.put(
-            unblurred_frame,
-            PathItem(xy=delta, value=(frame_index, max_val)),
-            absolute_position=absolute_position,
-        )
-
+    render = stitch(tspos2file, verbose=args.verbose)
     # 最後に、stitchした大画像を保存する（メモリ効率的）
     # tspos2ファイル名から出力ファイル名を生成
     # 例: IMG_0401_0.tspos2 -> IMG_0401_0_hires.jpg
     base_path = os.path.splitext(tspos2file)[0] + "_hires"
-    print(f"Saving high-resolution image to {base_path}.jpg...")
     render.save(base_path=base_path)
-    print("Done!")
 
 
 if __name__ == "__main__":

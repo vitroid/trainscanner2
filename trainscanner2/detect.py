@@ -67,7 +67,7 @@ class Path:
 
     # 予測し、結果は内部に保存する。
     def predict(self):
-        # logger.info(f"Predict from {self.mean=}")
+        # logger.debug(f"Predict from {self.mean=}")
         self.predicted = self.kf.transition_matrices @ self.mean
         return self.predicted
 
@@ -109,7 +109,8 @@ class MotionDetector:
 
     def done(self):
         # 最後まで生きのこったpathをpurgeする。
-        for path in self.paths.keys():
+        # 辞書のコピーを作成してからイテレート（競合状態を回避）
+        for path in list(self.paths.keys()):
             yield path, self.paths[path].history
 
     def _detect(
@@ -125,7 +126,8 @@ class MotionDetector:
     ):
         # self.pathsに直前までのピーク位置の履歴が保存されていて、
         # それぞれの新しい位置をカルマンフィルタで予測する。
-        for path in self.paths.values():
+        # 辞書のコピーを作成してからイテレート（競合状態を回避）
+        for path in list(self.paths.values()):
             path.predict()
 
         # 高さが0.3以上の極大の位置を、スコアが大きい順に3つさがす。
@@ -169,7 +171,8 @@ class MotionDetector:
 
         if len(maxima_list) > 0:
             # 追跡中の各pathについて
-            for path in self.paths.keys():
+            # 辞書のコピーを作成してからイテレート（競合状態を回避）
+            for path in list(self.paths.keys()):
                 xy, d = self.paths[path].closest(maxima_list)
                 # 一番近い極大がmax_shake以内にあれば (てぶれ等による多少のずれは許容する)
                 if xy is not None and d <= max_shake:
@@ -222,7 +225,7 @@ class MotionDetector:
             # 2つのパスの間で、最後の3点の座標がまったく同じ場合は、パスが合流したとみなし、長い方(番号が若い方)を残し、短い方は抹消する。
             if tail in final_path:
                 # 最後3frameの軌道が同じ場合は、新しいほうを廃止する。
-                self.logger.info(
+                self.logger.debug(
                     f"The path {path} merges with final_path {final_path[tail]} {tail=}."
                 )
                 dropped_paths.add(path)
@@ -236,7 +239,8 @@ class MotionDetector:
         for path in dropped_paths:
             del self.paths[path]
 
-        for path in self.paths.keys():
+        # 辞書のコピーを作成してからイテレート（競合状態を回避）
+        for path in list(self.paths.keys()):
             self.logger.debug(
                 f"{path=}: {self.paths[path].missed_duration=} {[h.xy for h in self.paths[path].history]}"
             )

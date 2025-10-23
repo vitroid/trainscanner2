@@ -1,5 +1,6 @@
 import sys
 from logging import getLogger, INFO, basicConfig
+from tqdm import tqdm
 
 from trainscanner.video import video_loader_factory
 from trainscanner2.analyze import analyze_iter
@@ -28,6 +29,7 @@ def main():
     else:
         videofile = sys.argv[1]
     vl = video_loader_factory(videofile)
+    total_frames = vl.total_frames()
     frame = vl.next()
     scale = (300 * 300 / (frame.shape[0] * frame.shape[1])) ** 0.5
     if scale > 1.0:
@@ -39,10 +41,13 @@ def main():
     renderer = Render(video_path=videofile, scaling_factor=scale)
 
     def iterator():
-        for frame_index, absolute_position, matchscore, scaled_frame in analyze_iter(
-            vl, scaling_ratio=scale
+        for frame_index, absolute_position, matchscore, scaled_frame in tqdm(
+            analyze_iter(vl, scaling_ratio=scale),
+            desc=f"Processing frames {total_frames}",
+            total=total_frames,
+            unit="frame",
         ):
-            logger.info(f"{frame_index=} {absolute_position=}")
+            logger.debug(f"{frame_index=} {absolute_position=}")
             frame_positions[frame_index] = absolute_position
             yield frame_index, absolute_position, matchscore, scaled_frame
 
@@ -66,7 +71,7 @@ def main():
 
     # 処理完了後、低品質ウィンドウを最終確認（処理中も随時閉じられている）
     logger.info("Processing complete. Final check for low-quality windows...")
-    renderer.close_low_quality_windows(quality_ratio=0.75)
+    renderer.close_low_quality_windows(quality_ratio=0.5)
 
     # PyQt6ウィンドウが全て閉じられるまで待機
     logger.info("Close remaining windows to exit.")

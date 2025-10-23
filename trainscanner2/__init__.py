@@ -1,4 +1,8 @@
 from dataclasses import dataclass
+import cv2
+import numpy as np
+
+from trainscanner.image import standardize
 
 
 @dataclass
@@ -27,3 +31,9 @@ class FIFO:
     @property
     def filled(self):
         return len(self.queue) == self.maxlen
+
+
+def std_hdr(image):
+    return standardize(
+        np.log(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1)
+    )

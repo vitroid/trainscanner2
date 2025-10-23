@@ -117,12 +117,12 @@ class Render_one:
         if len(self.history) > self.num_leading_frames:
             if 0 < self.quality < quality_threshold:  # or abs(self.train_position) < 3:
                 # close the window
-                self.logger.info(
+                self.logger.debug(
                     f"Close {self.id=} {self.quality=} {quality_threshold=} {self.train_position=}"
                 )
-                # self.logger.info(f"{0 < self.quality < quality_threshold}")
-                # self.logger.info(f"{self.train_position}")
-                # self.logger.info(self.history)
+                # self.logger.debug(f"{0 < self.quality < quality_threshold}")
+                # self.logger.debug(f"{self.train_position}")
+                # self.logger.debug(self.history)
                 self.done()
                 return
 
@@ -289,20 +289,22 @@ class Render_one:
 
         # 画像を保存（メモリ効率的）
         if isinstance(self.canvas, ImageStrips):
-            self.logger.info(f"Saving image to {image_path} (memory-efficient mode)...")
+            self.logger.debug(
+                f"Saving image to {image_path} (memory-efficient mode)..."
+            )
             self.canvas.save_to_file(image_path)
         else:
             # 従来のSimpleImage形式
             img = self.canvas.get_image()
             if img is not None:
                 cv2.imwrite(image_path, img)
-                self.logger.info(f"Saved image to {image_path}")
+                self.logger.debug(f"Saved image to {image_path}")
 
         # stitching履歴を保存
         history_data = self.export_history()
         with open(history_path, "w", encoding="utf-8") as f:
             json.dump(history_data, f, indent=2, ensure_ascii=False)
-        self.logger.info(f"Saved history to {history_path}")
+        self.logger.debug(f"Saved history to {history_path}")
 
         return image_path, history_path
 
@@ -386,13 +388,14 @@ class Render:
         r.put(
             frame,
             historyitem,
-            quality_threshold=self.max_quality * 0.75,
+            quality_threshold=self.max_quality * 0.5,
             absolute_position=absolute_position,
         )
         q = r.quality
         # 最高品質が更新されたら、低品質ウィンドウをチェックして閉じる
         if self.max_quality < q:
             self.max_quality = q
+            self.logger.debug(f"Max quality updated: {self.max_quality}")
             # 閾値が上がったので、低品質ウィンドウを閉じる
             self._check_and_close_low_quality_windows()
 
@@ -410,7 +413,7 @@ class Render:
             r.done()
             # Pathを削除（メモリ解放、以降の処理をスキップ）
             del self.renderers[id]
-            self.logger.info(f"Removed renderer {id}")
+            self.logger.debug(f"Removed renderer {id}")
 
     def remove_renderer(self, id):
         """
@@ -424,7 +427,7 @@ class Render:
         """
         if id in self.renderers:
             del self.renderers[id]
-            self.logger.info(f"Removed renderer {id}")
+            self.logger.debug(f"Removed renderer {id}")
 
     def get_active_paths(self):
         """
@@ -490,10 +493,13 @@ class Render:
             return
 
         threshold = self.max_quality * quality_ratio
+        self.logger.debug(
+            f"Threshold: {threshold=} {self.max_quality=} {quality_ratio=}"
+        )
         to_close = []
 
-        # 閉じるウィンドウをリストアップ
-        for id, renderer in self.renderers.items():
+        # 閉じるウィンドウをリストアップ（辞書のコピーを作成してからイテレート）
+        for id, renderer in list(self.renderers.items()):
             # 品質が計算されていて（quality > 0）、かつ閾値以下
             if renderer.quality > 0 and renderer.quality < threshold:
                 to_close.append(id)
@@ -505,7 +511,7 @@ class Render:
                 continue
 
             renderer = self.renderers[id]
-            self.logger.info(
+            self.logger.debug(
                 f"Auto-closing window {id}: quality={renderer.quality:.3f} < threshold={threshold:.3f}"
             )
             if self.window_manager:
@@ -521,7 +527,7 @@ class Render:
                     del self.renderers[id]
 
         if to_close:
-            self.logger.info(
+            self.logger.debug(
                 f"Closed {len(to_close)} low-quality windows during processing"
             )
 
