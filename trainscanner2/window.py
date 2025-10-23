@@ -134,6 +134,11 @@ class ImageWindow(QMainWindow):
             self.save_button.clicked.connect(self.save_image)
             button_layout.addWidget(self.save_button)
 
+            # 高精細保存ボタン
+            self.save_hires_button = QPushButton("高精細保存")
+            self.save_hires_button.clicked.connect(self.save_hires_image)
+            button_layout.addWidget(self.save_hires_button)
+
             # 閉じるボタン
             self.close_button = QPushButton("閉じる")
             self.close_button.clicked.connect(self.close)
@@ -369,9 +374,144 @@ class ImageWindow(QMainWindow):
 
             # 保存成功のメッセージは表示しない（ワンクリック操作を維持）
             # 保存が成功したらウィンドウを閉じる
-            self.close()
+            # ただし、高精細保存の場合は閉じない（save_hires_imageで制御）
+            if not hasattr(self, "_skip_close_after_save"):
+                self.close()
         except Exception as e:
             QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
+
+    def save_hires_image(self):
+        """
+        高精細画像を保存する（stitch関数を直接呼び出して高解像度で再処理）
+
+        【仕様】
+        1. 低解像度画像を保存（.tspos2ファイルを作成）
+        2. stitch関数を直接呼び出して高解像度で再処理
+        3. 高解像度画像を{動画名}_{ウィンドウID}_hires.jpgとして保存
+        4. GUI上にプログレスバーを表示
+        5. 完了後にウィンドウを閉じる
+
+        【処理の流れ】
+        1. 低解像度画像と.tspos2ファイルを保存
+        2. stitch関数を直接呼び出し
+        3. プログレスバーで進捗を表示
+        4. 高解像度画像の生成を待つ
+        5. ウィンドウを閉じる
+        """
+        import os
+        from pathlib import Path
+
+        # まず低解像度画像を保存（.tspos2ファイルを作成）
+        # 高精細保存の場合はウィンドウを閉じないようにフラグを設定
+        self._skip_close_after_save = True
+        try:
+            self.save_image()
+        except Exception as e:
+            QMessageBox.critical(
+                self, "エラー", f"低解像度画像の保存に失敗しました:\n{e}"
+            )
+            return
+        finally:
+            # フラグをクリア
+            if hasattr(self, "_skip_close_after_save"):
+                delattr(self, "_skip_close_after_save")
+
+        # .tspos2ファイルのパスを取得
+        base_path = f"{self.video_base}_{self.window_id}"
+        tspos2_path = f"{base_path}.tspos2"
+
+        if not os.path.exists(tspos2_path):
+            QMessageBox.critical(
+                self, "エラー", f".tspos2ファイルが見つかりません:\n{tspos2_path}"
+            )
+            return
+
+        # プログレスバー付きのカスタムダイアログを作成
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
+
+        progress_dialog = QDialog(self)
+        progress_dialog.setWindowTitle("高精細保存中...")
+        progress_dialog.setModal(True)
+        progress_dialog.setFixedSize(400, 150)
+
+        # レイアウトを作成
+        layout = QVBoxLayout()
+
+        # 説明ラベル
+        label = QLabel("高解像度での再処理を実行中です...")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+
+        # プログレスバー
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        progress_bar.setFormat("準備中...")
+        # プログレスバーのスタイルを設定
+        progress_bar.setStyleSheet(
+            """
+            QProgressBar {
+                border: 2px solid #ccc;
+                border-radius: 5px;
+                text-align: center;
+                font-weight: bold;
+                height: 25px;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                border-radius: 3px;
+            }
+        """
+        )
+        layout.addWidget(progress_bar)
+
+        # レイアウトをダイアログに設定
+        progress_dialog.setLayout(layout)
+        progress_dialog.show()
+
+        try:
+            # stitch関数を直接呼び出し
+            from trainscanner2.stitch import stitch
+
+            # プログレスコールバック関数
+            def update_progress(current, total):
+                percentage = int((current / total) * 100)
+                progress_bar.setValue(percentage)
+                progress_bar.setFormat(
+                    f"フレーム処理中... {current}/{total} ({percentage}%)"
+                )
+                # ラベルのテキストも更新
+                label.setText(f"フレーム {current}/{total} を処理中... ({percentage}%)")
+
+                # GUIの更新を強制
+                QApplication.processEvents()
+
+            self.logger.debug(f"Executing high-resolution stitching: {tspos2_path}")
+
+            # stitch関数を呼び出し（verbose=Falseでコンソール出力を抑制）
+            render = stitch(
+                tspos2file=tspos2_path, verbose=False, progress_callback=update_progress
+            )
+
+            # 高解像度画像を保存
+            hires_base_path = f"{base_path}_hires"
+            progress_bar.setValue(100)
+            progress_bar.setFormat("画像を保存中...")
+            label.setText("高解像度画像を保存中...")
+            QApplication.processEvents()
+
+            render.save(base_path=hires_base_path)
+
+            progress_dialog.close()
+
+            # 処理完了後、ウィンドウを閉じる
+            self.close()
+
+        except Exception as e:
+            progress_dialog.close()
+            QMessageBox.critical(
+                self, "エラー", f"高精細処理の実行に失敗しました:\n{e}"
+            )
 
     def closeEvent(self, event):
         """
@@ -436,7 +576,7 @@ class WindowManager:
             self.flush_timer.timeout.connect(self.flush_all_pending)
             self.flush_timer.start(1000)  # 1秒ごと
 
-            self.logger.info("WindowManager initialized with PyQt6")
+            self.logger.debug("WindowManager initialized with PyQt6")
         except Exception as e:
             self.logger.error(f"Failed to initialize WindowManager: {e}")
             raise
@@ -457,7 +597,9 @@ class WindowManager:
         【目的】更新頻度制限（1秒に1回）により保留された画像を表示
         【効果】毎フレーム更新しなくても、最新の画像が定期的に表示される
         """
-        for window in self.windows.values():
+        # 辞書のコピーを作成してからイテレート（競合状態を回避）
+        windows_copy = list(self.windows.values())
+        for window in windows_copy:
             window.flush_pending()
 
     def _on_window_closed(self, window_id: int):
@@ -470,7 +612,7 @@ class WindowManager:
         2. Renderに通知してPathを削除（メモリ解放、以降の処理をスキップ）
         """
         if window_id in self.windows:
-            self.logger.info(f"Window {window_id} closed")
+            self.logger.debug(f"Window {window_id} closed")
             del self.windows[window_id]
             # Renderにも通知してPathを削除
             if self.renderer_callback:
@@ -529,8 +671,8 @@ class WindowManager:
 
     def wait_for_close(self):
         """すべてのウィンドウが閉じられるまで待機"""
-        self.logger.info("Waiting for all windows to be closed...")
+        self.logger.debug("Waiting for all windows to be closed...")
         while self.has_windows():
             self.app.processEvents()
             time.sleep(0.1)
-        self.logger.info("All windows closed.")
+        self.logger.debug("All windows closed.")
