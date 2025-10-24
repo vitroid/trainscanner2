@@ -1,6 +1,11 @@
 import sys
+import os
+import numpy as np
 from logging import getLogger, INFO, basicConfig
 from tqdm import tqdm
+
+# PyQt6をoffscreenモードで実行（macOSのシステムサービスエラーを回避）
+# os.environ["QT_QPA_PLATFORM"] = "offscreen"  # 一時的に無効化
 
 from trainscanner.video import video_loader_factory
 from trainscanner2.analyze import analyze_iter
@@ -21,13 +26,16 @@ from trainscanner2.render import Render
 def main():
     basicConfig(level=INFO)
     logger = getLogger(__name__)
+
     # 動画を読み込む
     if len(sys.argv) < 2:
         videofile = "examples/sample3.mov"
         videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/他人の動画/antishake test/Untitled.mp4"
         videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Czech Trams/00205/00205.MTS"
+        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Czech Trams/00199 8732/00199.MTS"
     else:
         videofile = sys.argv[1]
+
     vl = video_loader_factory(videofile)
     total_frames = vl.total_frames()
     frame = vl.next()
@@ -38,36 +46,56 @@ def main():
     frame_positions = {}
 
     # PyQt6ウィンドウで表示（OpenCVウィンドウを使う場合は use_pyqt=False）
-    renderer = Render(video_path=videofile, scaling_factor=scale)
+    # マルチビューウィンドウを使用する場合は use_multiview=True
+    renderer = Render(video_path=videofile, scaling_factor=scale, use_multiview=True)
 
     def iterator():
-        for frame_index, absolute_position, matchscore, scaled_frame in tqdm(
-            analyze_iter(vl, scaling_ratio=scale),
-            desc=f"Processing frames {total_frames}",
-            total=total_frames,
-            unit="frame",
+        # 実際の動画処理を使用
+        for frame_index, absolute_position, matchscore, scaled_frame in analyze_iter(
+            vl, scaling_ratio=scale
         ):
-            logger.debug(f"{frame_index=} {absolute_position=}")
             frame_positions[frame_index] = absolute_position
             yield frame_index, absolute_position, matchscore, scaled_frame
 
+    # 実際の動画処理
+    logger.info("Starting video processing with MultiView window...")
+
     motiondetector = MotionDetector()
     best_score = 0.0
-    # def detect_iter(self, iterator, plot: bool = False):
-    # iterator()からスコア行列をとりだし、pathをたどり、pathがとぎれたら鎖(移動ベクトルの列挙)を返す。
+
     for frame_index, absolute_position, matchscore, frame in iterator():
         paths, dropped_paths = motiondetector._detect(
             matchscore, frame_index=frame_index
         )
 
+        # デバッグ情報を出力
+        logger.info(
+            f"Frame {frame_index}: Found {len(paths)} paths, {len(dropped_paths)} dropped"
+        )
+        for path_id in paths.keys():
+            logger.info(
+                f"  Path {path_id}: {len(paths[path_id].history)} history items"
+            )
+
         for id, path in paths.items():
             renderer.put(
                 id, frame, path.history[-1], absolute_position=absolute_position
             )
-        for path in dropped_paths:
-            renderer.done(path)
+        for path_id in dropped_paths:
+            renderer.done(id=path_id)
 
-    motiondetector.done()
+        # GUIの更新を許可（非ブロッキング処理）
+        if hasattr(renderer, "multiview_manager") and renderer.multiview_manager:
+            renderer.multiview_manager.app.processEvents()
+
+        # 処理の間隔を空けて、GUIの応答性を保つ
+        import time
+
+        time.sleep(0.1)
+
+    # 残りのパスを完了として処理
+    for path_id, history in motiondetector.done():
+        renderer.done(id=path_id)
 
     # 処理完了後、低品質ウィンドウを最終確認（処理中も随時閉じられている）
     logger.info("Processing complete. Final check for low-quality windows...")
