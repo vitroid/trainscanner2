@@ -141,15 +141,15 @@ class Render_one:
                 return
 
             self._render_one(frame, pathitem)
-        elif len(self.history) <= self.num_leading_frames:
-            # 最初の20フレームでもcanvasを初期化
-            if self.canvas is None:
-                self.canvas = ImageStrips(cache=self.cache)
-                self.logger.info(f"Initialized canvas for path {self.id}")
+            # elif len(self.history) <= self.num_leading_frames:
+            #     # 最初の20フレームでもcanvasを初期化
+            #     if self.canvas is None:
+            #         self.canvas = ImageStrips(cache=self.cache)
+            #         self.logger.info(f"Initialized canvas for path {self.id}")
 
-                # canvasが初期化された後、multiview_managerに追加
-                # Render_oneにはmultiview_managerへの直接参照がないため、
-                # この処理はRender.put()で行う
+            #         # canvasが初期化された後、multiview_managerに追加
+            #         # Render_oneにはmultiview_managerへの直接参照がないため、
+            #         # この処理はRender.put()で行う
 
             # ImageStripsモードの場合、canvas.get_image()は重い（全体結合）
             # PyQt6では、update_windowにNoneを渡してcanvasを直接参照させる
@@ -442,8 +442,8 @@ class Render:
             self.multiview_manager is not None
             and hasattr(r, "canvas")
             and r.canvas is not None
-            and r.quality > 0.5
-        ):  # 品質閾値を0.5に上げる
+            and r.quality > 0.3
+        ):  # 品質閾値を0.3に戻す
             # 既に追加されているかチェック（より確実に）
             try:
                 if id not in self.multiview_manager.path_widgets:
