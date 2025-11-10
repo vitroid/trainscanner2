@@ -44,7 +44,8 @@ class AntiShaker2:
         ] = self._last_frame
         # frame_std と mask を明示的にfloat32に変換してから掛け算
         template = np.multiply(frame_std.astype(np.float32), mask.astype(np.float32))
-        scores = cv2.matchTemplate(frame0_extend, template, cv2.TM_CCORR)
+        # antishakeでは、整数未満の変位は無視する。精密照合はdetectにまかせる。
+        scores = cv2.matchTemplate(frame0_extend, template, cv2.TM_CCORR_NORMED)
         # print(scores)
         _, _, _, max_loc = cv2.minMaxLoc(scores)
         dx, dy = (max_loc[0] - self._velocity, max_loc[1] - self._velocity)
@@ -64,7 +65,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         videofile = "examples/sample3.mov"
         videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/他人の動画/antishake test/Untitled.mp4"
-        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/Czech Trams/00205/00205.MTS"
+        videofile = "/Users/matto/Dropbox/ArtsAndIllustrations/Stitch tmp2/TrainScannerWorkArea/Czech Trams/00205/00205.MTS"
     else:
         videofile = sys.argv[1]
     cap = cv2.VideoCapture(videofile)

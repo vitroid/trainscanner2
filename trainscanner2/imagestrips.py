@@ -95,7 +95,7 @@ class ImageStrips:
         Returns:
             np.ndarray: 結合された画像、またはNone（画像がない場合）
         """
-        self.logger.debug(f"get_image(start={start}, width={width})")
+        # self.logger.debug(f"get_image(start={start}, width={width})")
         if len(self.images) == 0 and self.buffer is None:
             return None
 
@@ -176,7 +176,7 @@ class ImageStrips:
         - ディスク容量は必要（画像サイズの3倍程度）
 
         Args:
-            filename: 保存先ファイル名（.jpg, .png, .tiffなど）
+            filename: 保存先ファイル名（.png, .tiffなど）
         """
         if not self.images:
             return

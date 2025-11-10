@@ -1,12 +1,12 @@
 import numpy as np
 import cv2
-from logging import getLogger
+from logging import getLogger, INFO
 import os
 import json
 
 from trainscanner2 import FIFO, PathItem
 from trainscanner2.imagestrips import ImageStrips
-from trainscanner2.window import ImageWindow, WindowManager
+from trainscanner2.window import WindowManager
 
 # マルチビューウィンドウのインポートを条件付きにする
 try:
@@ -61,7 +61,7 @@ class Render_one:
     ):
         self.num_leading_frames = num_leading_frames
         self.leading_frames = FIFO(num_leading_frames)
-        self.history = []  # PathItemのリスト
+        self.pathitem_history = []  # PathItemのリスト
         self.abs_positions = []  # 各フレームのabsolute_position（手ぶれ補正）
         self.train_positions = []  # 各フレームでのtrain_position（再計算不要に）
         self.id = id
@@ -118,38 +118,19 @@ class Render_one:
         self,
         frame: np.ndarray,
         pathitem: PathItem,
-        quality_threshold=0.0,
         absolute_position=None,
     ):
+        # renderを開始するまでに「溜める」時間
+        delay_frames = 10
         if not self.alive:
             return
-        self.history.append(pathitem)
+        self.pathitem_history.append(pathitem)
         self.abs_positions.append(
             absolute_position if absolute_position is not None else (0, 0)
         )
         self.leading_frames.append(frame)
-        if len(self.history) > self.num_leading_frames:
-            if 0 < self.quality < quality_threshold:  # or abs(self.train_position) < 3:
-                # close the window
-                self.logger.debug(
-                    f"Close {self.id=} {self.quality=} {quality_threshold=} {self.train_position=}"
-                )
-                # self.logger.debug(f"{0 < self.quality < quality_threshold}")
-                # self.logger.debug(f"{self.train_position}")
-                # self.logger.debug(self.history)
-                self.done()
-                return
-
+        if len(self.pathitem_history) > self.num_leading_frames:
             self._render_one(frame, pathitem)
-            # elif len(self.history) <= self.num_leading_frames:
-            #     # 最初の20フレームでもcanvasを初期化
-            #     if self.canvas is None:
-            #         self.canvas = ImageStrips(cache=self.cache)
-            #         self.logger.info(f"Initialized canvas for path {self.id}")
-
-            #         # canvasが初期化された後、multiview_managerに追加
-            #         # Render_oneにはmultiview_managerへの直接参照がないため、
-            #         # この処理はRender.put()で行う
 
             # ImageStripsモードの場合、canvas.get_image()は重い（全体結合）
             # PyQt6では、update_windowにNoneを渡してcanvasを直接参照させる
@@ -200,21 +181,17 @@ class Render_one:
                                 f"PyQt6 window error: {e}, falling back to OpenCV"
                             )
                             cv2.imshow(f"{self.id}", img)
-                            cv2.waitKey(1)
                     else:
                         # PyQt6が使用されていない場合はOpenCVを使用
                         cv2.imshow(f"{self.id}", img)
-                        cv2.waitKey(1)
-        elif len(self.history) == 20:
-            for f, pi in zip(self.leading_frames.queue, self.history):
+        elif len(self.pathitem_history) == delay_frames:
+            for f, pi in zip(self.leading_frames.queue, self.pathitem_history):
                 self._render_one(f, pi)
 
     @property
     def quality(self):
-        # 最初の20フレームで判別する。
-        if len(self.history) > 20:
-            return np.mean([h.value[1] for h in self.history])
-        return 0.0
+        # 最後の5フレームで判別する。
+        return np.mean([h.value[1] for h in self.pathitem_history[-20:]])
 
     def export_history(self):
         """
@@ -252,7 +229,7 @@ class Render_one:
         # これにより、コードの重複を避け、計算ミスを防ぐ
         history_data = []
 
-        for idx, h in enumerate(self.history):
+        for idx, h in enumerate(self.pathitem_history):
             frame_index, match_score = h.value
             delta_x, delta_y = h.xy
 
@@ -296,7 +273,7 @@ class Render_one:
         - ImageStrips.save_to_file()を使ってメモリ効率的に保存
 
         【保存されるファイル】
-        - {base_path}.jpg: stitchされた画像
+        - {base_path}.png: stitchされた画像
         - {base_path}.tspos2: stitching履歴（JSON形式）
 
         Args:
@@ -311,7 +288,7 @@ class Render_one:
             else:
                 base_path = f"train_scan_{self.id}"
 
-        image_path = f"{base_path}.jpg"
+        image_path = f"{base_path}.png"
         history_path = f"{base_path}.tspos2"
 
         # 画像を保存（メモリ効率的）
@@ -420,7 +397,7 @@ class Render:
             # 新しいPathを作成
             r = Render_one(
                 id,
-                num_leading_frames=20,
+                num_leading_frames=10,
                 window_manager=self.window_manager,
                 scaling_factor=self.scaling_factor,
                 video_path=self.video_path,
@@ -433,7 +410,6 @@ class Render:
         r.put(
             frame,
             historyitem,
-            quality_threshold=self.max_quality * 0.5,
             absolute_position=absolute_position,
         )
 
@@ -445,20 +421,38 @@ class Render:
             and r.quality > 0.3
         ):  # 品質閾値を0.3に戻す
             # 既に追加されているかチェック（より確実に）
-            try:
-                if id not in self.multiview_manager.path_widgets:
-                    self.logger.info(
-                        f"Adding path {id} to multiview manager (quality: {r.quality:.3f})"
-                    )
-                    self.multiview_manager.add_path(id, r)
-                else:
-                    self.logger.debug(f"Path {id} already exists in multiview manager")
-            except AttributeError:
-                # path_widgetsが存在しない場合は追加
+            # もしpath_widgetsが存在しないなら、
+            if not hasattr(self.multiview_manager.window, "path_widgets"):
                 self.logger.info(
                     f"Adding path {id} to multiview manager (first time, quality: {r.quality:.3f})"
                 )
-                self.multiview_manager.add_path(id, r)
+                self.multiview_manager.window.add_path(id, r)
+            elif id not in self.multiview_manager.window.path_widgets:
+                self.logger.info(
+                    f"Adding path {id} to multiview manager (quality: {r.quality:.3f})"
+                )
+                self.multiview_manager.window.add_path(id, r)
+            else:
+                # 既存パネルの場合も最新のRender_one参照を同期して即時更新
+                self.multiview_manager.window.renderers[id] = r
+                path_widget = self.multiview_manager.window.path_widgets.get(id)
+                if path_widget is not None:
+                    if hasattr(path_widget, "set_active"):
+                        path_widget.set_active(True)
+                    path_widget.update_image(r, force=True)
+                self.logger.debug(f"Path {id} already exists in multiview manager")
+        else:
+            self.logger.debug(f"{id=} Not rendered because:")
+            if self.multiview_manager is None:
+                self.logger.debug("- multiview_manager is None")
+            if not hasattr(r, "canvas"):
+                self.logger.debug("- canvas is not existent")
+            if r.canvas is None:
+                self.logger.debug("- canvas is None")
+            if r.quality <= 0.3:
+                self.logger.debug(f"- {r.quality=} is less than 0.3")
+                self.logger.debug(f"{[h.value[1] for h in r.pathitem_history[-20:]]}")
+
         q = r.quality
         # 最高品質が更新されたら、低品質ウィンドウをチェックして閉じる
         if self.max_quality < q:
@@ -468,6 +462,23 @@ class Render:
             self._check_and_close_low_quality_windows()
             # multiview_managerからも低品質パネルを削除
             self._remove_low_quality_from_multiview()
+
+        # 閾値を下げる。あるいはこれを使わないほうがいいかも
+        self.max_quality *= 0.995
+
+    def mark_inactive(self, id: int):
+        """
+        MotionDetector.pathsから除外されたPathを「非アクティブ」として扱う。
+
+        ウィンドウは残したまま更新のみ停止したいケースで使用する。
+        """
+        if id not in self.renderers:
+            return
+
+        renderer = self.renderers[id]
+        if self.multiview_manager is not None:
+            self.logger.info(f"Marking path {id} as inactive in MultiViewWindow")
+            self.multiview_manager.mark_path_inactive(id)
 
     def done(self, id):
         """
@@ -599,7 +610,7 @@ class Render:
             else:
                 # OpenCVの場合: 手動でウィンドウを閉じて削除
                 cv2.destroyWindow(f"{id}")
-                cv2.waitKey(1)
+
                 # Pathを削除
                 if id in self.renderers:
                     del self.renderers[id]

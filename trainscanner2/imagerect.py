@@ -153,6 +153,9 @@ class ImageRect:
         # widthを指定すると縮小する。
         return self.get_region()
 
+    def coord(self, x: int, y: int):
+        return x + self.left, y + self.top
+
 
 def test():
     import sys

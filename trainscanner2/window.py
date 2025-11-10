@@ -79,7 +79,13 @@ class ImageWindow(QMainWindow):
         self.video_base = video_base or "train_scan"
         self.close_callback = close_callback
         self.render_one = render_one  # stitching履歴にアクセスするため
-        self.setWindowTitle(f"Train Scanner - ID: {window_id}")
+
+        # ウィンドウタイトルをビデオファイル名のbasenameに設定
+        if video_base:
+            video_basename = os.path.basename(video_base)
+            self.setWindowTitle(f"Train Scanner - {video_basename} (ID: {window_id})")
+        else:
+            self.setWindowTitle(f"Train Scanner - ID: {window_id}")
 
         # 画像管理
         self.current_image = None  # 現在表示中の画像
@@ -286,16 +292,22 @@ class ImageWindow(QMainWindow):
 
     def set_finished(self, quality: float):
         """処理が完了したことを表示する"""
-        self.setWindowTitle(
-            f"Train Scanner - ID: {self.window_id} [処理完了 - Quality: {quality:.3f}]"
-        )
+        if self.video_base and self.video_base != "train_scan":
+            video_basename = os.path.basename(self.video_base)
+            self.setWindowTitle(
+                f"Train Scanner - {video_basename} (ID: {self.window_id}) [処理完了 - Quality: {quality:.3f}]"
+            )
+        else:
+            self.setWindowTitle(
+                f"Train Scanner - ID: {self.window_id} [処理完了 - Quality: {quality:.3f}]"
+            )
 
     def save_image(self):
         """
         画像とstitching履歴を保存する（ダイアログなしで自動保存）
 
         【仕様】
-        - 画像ファイル名: {動画名}_{ウィンドウID}.jpg
+        - 画像ファイル名: {動画名}_{ウィンドウID}.png
         - 履歴ファイル名: {動画名}_{ウィンドウID}.tspos2 (JSON形式)
         - ImageStripsの場合は全体を結合して保存
         - ダイアログは表示せず、ワンクリックで保存完了
@@ -359,7 +371,7 @@ class ImageWindow(QMainWindow):
 
         # 動画のベース名 + ID でファイル名を作成
         base_path = f"{self.video_base}_{self.window_id}"
-        image_path = f"{base_path}.jpg"
+        image_path = f"{base_path}.png"
         history_path = f"{base_path}.tspos2"
 
         try:
@@ -387,7 +399,7 @@ class ImageWindow(QMainWindow):
         【仕様】
         1. 低解像度画像を保存（.tspos2ファイルを作成）
         2. stitch関数を直接呼び出して高解像度で再処理
-        3. 高解像度画像を{動画名}_{ウィンドウID}_hires.jpgとして保存
+        3. 高解像度画像を{動画名}_{ウィンドウID}_hires.pngとして保存
         4. GUI上にプログレスバーを表示
         5. 完了後にウィンドウを閉じる
 

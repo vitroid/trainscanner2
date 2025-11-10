@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from pyperbox import Rect
 from trainscanner.image import match, standardize
-from trainscanner.video import video_loader_factory
+from trainscanner2.video import video_loader_factory
 from trainscanner2 import FIFO, std_hdr
 from trainscanner2.analyze import normalize, BlurMask
 from trainscanner2.antishake import AntiShaker2
@@ -282,7 +282,7 @@ def main():
     render = stitch(tspos2file, verbose=args.verbose)
     # 最後に、stitchした大画像を保存する（メモリ効率的）
     # tspos2ファイル名から出力ファイル名を生成
-    # 例: IMG_0401_0.tspos2 -> IMG_0401_0_hires.jpg
+    # 例: IMG_0401_0.tspos2 -> IMG_0401_0_hires.png
     base_path = os.path.splitext(tspos2file)[0] + "_hires"
     render.save(base_path=base_path)
 

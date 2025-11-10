@@ -1,13 +1,13 @@
 import sys
 import os
 import numpy as np
-from logging import getLogger, INFO, basicConfig
+from logging import getLogger, INFO, DEBUG, basicConfig
 from tqdm import tqdm
 
 # PyQt6をoffscreenモードで実行（macOSのシステムサービスエラーを回避）
 # os.environ["QT_QPA_PLATFORM"] = "offscreen"  # 一時的に無効化
 
-from trainscanner.video import video_loader_factory
+from trainscanner2.video import video_loader_factory
 from trainscanner2.analyze import analyze_iter
 from trainscanner2.detect import MotionDetector
 from trainscanner2.render import Render
@@ -61,10 +61,9 @@ def main():
     logger.info("Starting video processing with MultiView window...")
 
     motiondetector = MotionDetector()
-    best_score = 0.0
 
     for frame_index, absolute_position, matchscore, frame in iterator():
-        paths, dropped_paths = motiondetector._detect(
+        paths, dropped_paths, active_path_ids = motiondetector._detect(
             matchscore, frame_index=frame_index
         )
 
@@ -81,19 +80,25 @@ def main():
             renderer.put(
                 id, frame, path.history[-1], absolute_position=absolute_position
             )
+
+        # アクティブなPath IDの一覧をMultiViewへ伝達（更新対象を限定）
+        if hasattr(renderer, "multiview_manager") and renderer.multiview_manager:
+            renderer.multiview_manager.set_active_paths(active_path_ids)
+
         for path_id in dropped_paths:
-            renderer.done(id=path_id)
+            renderer.mark_inactive(id=path_id)
 
         # GUIの更新を許可（非ブロッキング処理）
         if hasattr(renderer, "multiview_manager") and renderer.multiview_manager:
             renderer.multiview_manager.app.processEvents()
 
         # 処理の間隔を空けて、GUIの応答性を保つ
-        import time
+        # import time
 
-        time.sleep(0.1)
+        # time.sleep(0.1)
 
     # 残りのパスを完了として処理
+    ## これ要るのか?
     for path_id, history in motiondetector.done():
         renderer.done(id=path_id)
 

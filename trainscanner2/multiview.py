@@ -188,12 +188,12 @@ class SaveWorker(QThread):
                 # 高解像度画像を保存
                 render.save(base_path=hires_base_path)
                 self.progress.emit(100)
-                self.finished.emit(f"{hires_base_path}.jpg", True)
+                self.finished.emit(f"{hires_base_path}.png", True)
             else:
                 # 通常保存
                 self.render_one.save(base_path=self.base_path)
                 self.progress.emit(100)
-                self.finished.emit(f"{self.base_path}.jpg", True)
+                self.finished.emit(f"{self.base_path}.png", True)
 
         except Exception as e:
             self.finished.emit(str(e), False)
@@ -258,7 +258,7 @@ class HiresWorker(QThread):
 
             self.progress.emit(100)
             self.status_update.emit("完了")
-            self.finished.emit(f"{hires_base_path}.jpg", True)
+            self.finished.emit(f"{hires_base_path}.png", True)
 
         except Exception as e:
             self.status_update.emit("エラー")
@@ -303,8 +303,7 @@ class PathViewWidget(QWidget):
 
         # 3. 縦にstackしたパネル (幅=コンテナ幅いっぱい、高さ=画像の高さ)
         # 赤い枠で囲まれたパネル
-        self.setStyleSheet(
-            """
+        self.active_panel_style = """
             QWidget {
                 border: 3px solid #ff0000;
                 border-radius: 8px;
@@ -316,8 +315,21 @@ class PathViewWidget(QWidget):
                 border: 3px solid #4CAF50;
                 background-color: #f8f8f8;
             }
-            """
-        )
+        """
+        self.inactive_panel_style = """
+            QWidget {
+                border: 3px dashed #999999;
+                border-radius: 8px;
+                background-color: #f7f7f7;
+                margin: 5px;
+                padding: 5px;
+            }
+            QWidget:hover {
+                border: 3px dashed #7f8c8d;
+                background-color: #f0f0f0;
+            }
+        """
+        self.setStyleSheet(self.active_panel_style)
 
         # 4. 左:情報枠(固定幅) + 右:画像(横スクロール)
         main_layout = QHBoxLayout(self)
@@ -332,11 +344,12 @@ class PathViewWidget(QWidget):
         info_layout.setSpacing(5)
 
         # Path番号
-        self.title_label = QLabel(f"Path {path_id}")
+        self.base_title = f"Path {path_id}"
+        self.title_label = QLabel(self.base_title)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setStyleSheet(
-            "font-weight: bold; font-size: 14px; color: #2c3e50; background-color: #ecf0f1; padding: 3px; border-radius: 3px;"
-        )
+        self.title_active_style = "font-weight: bold; font-size: 14px; color: #2c3e50; background-color: #ecf0f1; padding: 3px; border-radius: 3px;"
+        self.title_inactive_style = "font-weight: bold; font-size: 14px; color: #7f8c8d; background-color: #f0f0f0; padding: 3px; border-radius: 3px;"
+        self.title_label.setStyleSheet(self.title_active_style)
         info_layout.addWidget(self.title_label)
 
         # 品質表示
@@ -346,6 +359,14 @@ class PathViewWidget(QWidget):
             "font-size: 11px; color: #666; padding: 2px; background-color: #f8f9fa; border-radius: 2px;"
         )
         info_layout.addWidget(self.quality_label)
+
+        # 最初のframe番号表示
+        self.frame_label = QLabel("Frame: -")
+        self.frame_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.frame_label.setStyleSheet(
+            "font-size: 10px; color: #888; padding: 2px; background-color: #f0f0f0; border-radius: 2px;"
+        )
+        info_layout.addWidget(self.frame_label)
 
         # ボタン
         self.save_button = ProgressButton("保存")
@@ -385,9 +406,17 @@ class PathViewWidget(QWidget):
             self.image_scroll_area, 1
         )  # stretch factor = 1 で残りの幅を全て使用
 
+        # 横スクロールの自動追従制御
+        self._auto_scroll = True
+        self._scrollbar_updating = False
+        self._horizontal_scrollbar = self.image_scroll_area.horizontalScrollBar()
+        if self._horizontal_scrollbar is not None:
+            self._horizontal_scrollbar.valueChanged.connect(
+                self._on_horizontal_scroll_changed
+            )
+
         # 共通スタイル設定
-        self.setStyleSheet(
-            """
+        self.common_style = """
             QLabel {
                 color: #333;
                 font-family: Arial, sans-serif;
@@ -403,7 +432,8 @@ class PathViewWidget(QWidget):
                 border-radius: 3px;
             }
         """
-        )
+        self._current_panel_style = self.active_panel_style
+        self._apply_panel_style()
 
         # データ
         self.render_one = None
@@ -413,6 +443,28 @@ class PathViewWidget(QWidget):
         # 保存ワーカーの管理
         self.save_worker = None
         self.hires_worker = None
+
+        # MotionDetector.pathsに含まれるかどうか
+        self.is_active = True
+
+    def _apply_panel_style(self):
+        """パネルのスタイルを再適用"""
+        combined_style = self._current_panel_style + "\n" + self.common_style
+        self.setStyleSheet(combined_style)
+
+    def set_active(self, active: bool):
+        """MotionDetector.pathsに含まれているかどうかを更新"""
+        self.is_active = active
+        if active:
+            self.title_label.setText(self.base_title)
+            self.title_label.setStyleSheet(self.title_active_style)
+            self._current_panel_style = self.active_panel_style
+        else:
+            self.title_label.setText(f"{self.base_title} (停止)")
+            self.title_label.setStyleSheet(self.title_inactive_style)
+            self._current_panel_style = self.inactive_panel_style
+
+        self._apply_panel_style()
 
     def update_image(self, render_one, force: bool = False):
         """画像を更新"""
@@ -495,8 +547,31 @@ class PathViewWidget(QWidget):
                 self.quality_label.setText("品質: 0.000")
                 self.quality_label.setStyleSheet("font-size: 12px; color: #666;")
 
-        # 画像ウィジェットのサイズを調整
-        self._adjust_image_widget_size()
+        # 横スクロールを右端に自動追従
+        if self._horizontal_scrollbar is not None:
+            maximum = self._horizontal_scrollbar.maximum()
+            if self._auto_scroll and maximum > 0:
+                self._scrollbar_updating = True
+                self._horizontal_scrollbar.setValue(maximum)
+                self._scrollbar_updating = False
+            elif maximum == 0:
+                # 横スクロールが不要な場合は次回に備えて自動追従を有効化
+                self._auto_scroll = True
+
+        # 最初のframe番号を更新
+        if hasattr(render_one, "history") and render_one.history:
+            first_frame = (
+                render_one.history[0].value[0]
+                if hasattr(render_one.history[0], "value")
+                else "-"
+            )
+            self.frame_label.setText(f"Frame: {first_frame}")
+        else:
+            self.frame_label.setText("Frame: -")
+
+        # 画像ウィジェットのサイズを調整（canvasが存在する場合は常に実行）
+        if hasattr(render_one, "canvas") and render_one.canvas is not None:
+            self._adjust_image_widget_size()
 
         # ボタンの状態を更新
         self._update_button_states()
@@ -549,6 +624,26 @@ class PathViewWidget(QWidget):
         self.save_button.setEnabled(is_complete)
         self.save_hires_button.setEnabled(is_complete)
 
+    def _on_horizontal_scroll_changed(self, value: int):
+        """ユーザーの横スクロール操作を検知して自動追従を制御"""
+        if self._horizontal_scrollbar is None:
+            return
+
+        if self._scrollbar_updating:
+            return
+
+        maximum = self._horizontal_scrollbar.maximum()
+        if maximum == 0:
+            self._auto_scroll = True
+            return
+
+        if value < maximum:
+            # 右端未満ならユーザー操作と判断し自動追従を一時停止
+            self._auto_scroll = False
+        else:
+            # 右端まで戻ったら自動追従を再開
+            self._auto_scroll = True
+
     def _adjust_image_widget_size(self):
         """画像ウィジェットのサイズを調整"""
         if not hasattr(self, "image_widget") or not self.image_widget:
@@ -567,9 +662,7 @@ class PathViewWidget(QWidget):
                         image_height, image_width = combined_image.shape[
                             :2
                         ]  # shape[0] = 高さ, shape[1] = 幅
-                        print(
-                            f"Debug: Image size from get_image: {image_width}x{image_height}"
-                        )
+                        # デバッグメッセージを削除
                 elif (
                     hasattr(self.render_one.canvas, "images")
                     and self.render_one.canvas.images
@@ -578,16 +671,15 @@ class PathViewWidget(QWidget):
                     first_image = self.render_one.canvas.images[0]
                     if hasattr(first_image, "shape"):
                         image_height, image_width = first_image.shape[:2]
-                        print(
-                            f"Debug: Image size from canvas images: {image_width}x{image_height}"
-                        )
+                        # デバッグメッセージを削除
             except Exception as e:
-                print(f"Debug: Error getting image size: {e}")
+                # エラーメッセージを削除（サイズ取得失敗は無視）
+                pass
 
         # 画像ウィジェットのサイズを設定
         self.image_widget.setMinimumSize(image_width, image_height)
         self.image_widget.resize(image_width, image_height)
-        print(f"Debug: Image widget size set to: {image_width}x{image_height}")
+        # デバッグメッセージを削除
 
     def save_image(self):
         """画像を並列処理で保存"""
@@ -731,9 +823,15 @@ class MultiViewWindow(QMainWindow):
 
         self.path_widgets: Dict[int, PathViewWidget] = {}
         self.renderers: Dict[int, object] = {}  # Render_oneインスタンス
+        self.active_path_ids = set()
         self.logger = getLogger(__name__)
 
-        self.setWindowTitle("Train Scanner - Multi View")
+        # ウィンドウタイトルをビデオファイル名のbasenameに設定
+        if video_base:
+            video_basename = os.path.basename(video_base)
+            self.setWindowTitle(f"Train Scanner - {video_basename}")
+        else:
+            self.setWindowTitle("Train Scanner - Multi View")
         self.setMinimumSize(1200, 800)
 
         # 1. Window: ユーザーの操作で大きさが変わる
@@ -808,8 +906,10 @@ class MultiViewWindow(QMainWindow):
             path_widget.save_button.setVisible(False)
             path_widget.save_hires_button.setVisible(False)
 
+        path_widget.set_active(True)
         self.path_widgets[path_id] = path_widget
         self.renderers[path_id] = render_one
+        self.active_path_ids.add(path_id)
 
         # 縦レイアウトに追加
         self._add_to_vertical(path_widget, path_id)
@@ -819,6 +919,22 @@ class MultiViewWindow(QMainWindow):
 
         self.logger.info(f"Successfully added path {path_id} to MultiViewWindow")
         self.logger.info(f"Total paths in window: {len(self.path_widgets)}")
+
+    def set_active_paths(self, active_path_ids):
+        """MotionDetector.pathsに含まれるPath ID一覧を設定"""
+        active_ids = set(active_path_ids)
+        self.active_path_ids = active_ids
+
+        for path_id, path_widget in self.path_widgets.items():
+            path_widget.set_active(path_id in active_ids)
+
+    def mark_path_inactive(self, path_id: int):
+        """特定のPathを非アクティブにマーク"""
+        if path_id not in self.path_widgets:
+            return
+
+        self.active_path_ids.discard(path_id)
+        self.path_widgets[path_id].set_active(False)
 
     def _add_to_vertical(self, path_widget: PathViewWidget, path_id: int):
         """縦レイアウトにウィジェットを追加"""
@@ -852,6 +968,7 @@ class MultiViewWindow(QMainWindow):
         path_widget.deleteLater()
         del self.path_widgets[path_id]
         del self.renderers[path_id]
+        self.active_path_ids.discard(path_id)
 
         # パネルコンテナのサイズを調整
         self._adjust_panels_container_size()
@@ -912,13 +1029,21 @@ class MultiViewWindow(QMainWindow):
         self.panels_container.resize(scroll_area_width, total_height)
 
     def update_all_paths(self):
-        """全てのPathを更新"""
+        """全てのPathを更新（更新が終わったパネルはスキップ）"""
+        updated_count = 0
         for path_id, path_widget in self.path_widgets.items():
-            if path_id in self.renderers and self.renderers[path_id] is not None:
-                path_widget.update_image(self.renderers[path_id])
+            render_one = self.renderers.get(path_id)
+            if render_one is None:
+                continue
+            if not path_widget.is_active:
+                continue
 
-        # 品質順で並べ替え
-        self._sort_panels_by_quality()
+            path_widget.update_image(render_one)
+            updated_count += 1
+
+        # 更新があった場合のみ品質順で並べ替え
+        if updated_count > 0:
+            self._sort_panels_by_quality()
 
     def has_paths(self) -> bool:
         """Pathが存在するかチェック"""
@@ -989,6 +1114,16 @@ class MultiViewManager:
         """Pathを削除"""
         if self.window is not None:
             self.window.remove_path(path_id)
+
+    def set_active_paths(self, active_path_ids):
+        """MotionDetectorでアクティブなPath IDをMultiViewに伝える"""
+        if self.window is not None:
+            self.window.set_active_paths(active_path_ids)
+
+    def mark_path_inactive(self, path_id: int):
+        """特定のPathを非アクティブとしてマーキング"""
+        if self.window is not None:
+            self.window.mark_path_inactive(path_id)
 
     def has_paths(self) -> bool:
         """Pathが存在するかチェック"""
