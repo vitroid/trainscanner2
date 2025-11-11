@@ -11,7 +11,7 @@ import os
 from tqdm import tqdm
 
 from pyperbox import Rect
-from trainscanner.image import match, standardize
+from trainscanner.image import match_rect, MatchRect, standardize, diffImage
 from trainscanner2.video import video_loader_factory
 from trainscanner2 import FIFO, std_hdr
 from trainscanner2.analyze import normalize, BlurMask
@@ -54,7 +54,9 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     # プログレスバーの設定
     if show_progress and progress_callback is None:
         # コールバックがない場合はtqdmを使用
-        progress_iter = tqdm(history_items, desc="Processing frames", unit="frame")
+        progress_iter = enumerate(
+            tqdm(history_items, desc="Processing frames", unit="frame")
+        )
     else:
         # コールバックがある場合は通常のイテレータを使用
         progress_iter = enumerate(history_items)
@@ -150,14 +152,31 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         )
         # scoreとは、2つの画像のピクセル内積。1に近いほど画像が似ている=よく重なる。
         # matchscoreはtick付き行列。
-        matchscore = match(
+        matchrect = match_rect(
             base_masked_extended, base_extended_rect, next_masked, next_rect
         )
 
         # video frame index, absolute location of the frame, matchscore
-        _, max_val, _, max_loc = cv2.minMaxLoc(matchscore.value)
-        dx += matchscore.dx[max_loc[0]]
-        dy += matchscore.dy[max_loc[1]]
+        (vx, vy), max_val = matchrect.peak()
+        dx += vx
+        dy += vy
+
+        preview_scale = (
+            1000 * 1000 / (base_frame.shape[0] * base_frame.shape[1])
+        ) ** 0.5
+        if preview_scale > 1.0:
+            preview_scale = 1.0
+        base_scaled = cv2.resize(base_frame, (0, 0), fx=preview_scale, fy=preview_scale)
+        next_scaled = cv2.resize(next_frame, (0, 0), fx=preview_scale, fy=preview_scale)
+        diff = diffImage(
+            base_scaled,
+            next_scaled,
+            -dx * preview_scale,
+            -dy * preview_scale,
+            mode="checker",
+        )
+        cv2.imshow("diff", diff)
+        cv2.waitKey(1)
 
         if dumped is None:
             dumped = np.array((dx, dy))
@@ -192,7 +211,7 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
             cv2.imshow("base_masked", base_masked)
             cv2.imshow("base_masked_extended", base_masked_extended)
             cv2.imshow("next_masked", next_masked)
-            cv2.imshow("matchscore", matchscore.value)
+            cv2.imshow("matchscore", matchrect.value)
             cv2.imshow("diff2", diff2)
             cv2.waitKey(0)
 

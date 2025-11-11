@@ -14,36 +14,6 @@ from trainscanner2 import PathItem
 from trainscanner2.imagerect import ImageRect
 
 
-def _find_peaks(arr: np.ndarray):
-    """
-    周囲8点のいずれよりも値が大きい点を極値とし、その位置と値を返す。
-    """
-    centers = arr[1:-1, 1:-1]
-    non_max = np.zeros_like(centers, dtype=bool)
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            if dx or dy:
-                cmp = (
-                    arr[
-                        1 + dy : centers.shape[0] + 1 + dy,
-                        1 + dx : centers.shape[1] + 1 + dx,
-                    ]
-                    > centers
-                )
-                non_max |= cmp
-    is_max = ~non_max
-    return [(x + 1, y + 1) for y, x in np.argwhere(is_max)]
-
-
-def find_peaks(img: ImageRect, height: float = 0.5):
-    """
-    周囲8点のいずれよりも値が大きい点を極値とし、その位置と値を返す。
-    """
-    for x, y in _find_peaks(img.image):
-        if img.image[y, x] > height:
-            yield img.coord(x, y), img.image[y, x]
-
-
 class Path:
     """
     極大の位置と値を追跡する。欠測があってもカルマンフィルタが補う。
@@ -153,11 +123,7 @@ class MotionDetector:
         maxima = [
             (int(x), int(y), value)
             for (x, y), value in sorted(
-                find_peaks(
-                    ImageRect(
-                        image=matchrect.value,
-                        lefttop=(matchrect.rect.left, matchrect.rect.top),
-                    ),
+                matchrect.peaks(
                     height=min_score,
                 ),
                 key=lambda x: x[1],
