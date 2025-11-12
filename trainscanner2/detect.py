@@ -9,9 +9,8 @@ import matplotlib.pyplot as plt
 import pykalman
 import cv2
 from pyperbox import Rect
-from trainscanner.image import MatchRect
+from trainscanner.image import MatchRect, ImageRect
 from trainscanner2 import PathItem
-from trainscanner2.imagerect import ImageRect
 
 
 class Path:

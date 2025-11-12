@@ -11,7 +11,7 @@ import os
 from tqdm import tqdm
 
 from pyperbox import Rect
-from trainscanner.image import match_rect, MatchRect, standardize, diffImage
+from trainscanner.image import match_rect, diffImage, ImageRect
 from trainscanner2.video import video_loader_factory
 from trainscanner2 import FIFO, std_hdr
 from trainscanner2.analyze import normalize, BlurMask
@@ -138,23 +138,14 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         base_masked_extended = cv2.warpAffine(
             base_masked_extended, M, (width + 2 * max_shift, height + 2 * max_shift)
         )
-        base_extended_rect = Rect.from_bounds(
-            -max_shift,
-            width + max_shift,
-            -max_shift,
-            height + max_shift,
-        )
-        next_rect = Rect.from_bounds(
-            0,
-            width,
-            0,
-            height,
-        )
         # scoreとは、2つの画像のピクセル内積。1に近いほど画像が似ている=よく重なる。
         # matchscoreはtick付き行列。
-        matchrect = match_rect(
-            base_masked_extended, base_extended_rect, next_masked, next_rect
+        base_imagerect = ImageRect(
+            image=base_masked_extended,
+            lefttop=(-max_shift, -max_shift),
         )
+        next_imagerect = ImageRect(image=next_masked, lefttop=(0, 0))
+        matchrect = match_rect(base_imagerect, next_imagerect)
 
         # video frame index, absolute location of the frame, matchscore
         (vx, vy), max_val = matchrect.peak(subpixel=True)

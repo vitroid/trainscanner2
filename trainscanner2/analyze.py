@@ -6,7 +6,7 @@ import json
 
 # from sklearn.mixture import GaussianMixture
 from pyperbox import Rect
-from trainscanner.image import match_rect, MatchRect
+from trainscanner.image import match_rect, MatchRect, ImageRect
 from trainscanner.video import video_loader_factory
 from trainscanner2 import FIFO, std_hdr
 from trainscanner2.antishake import AntiShaker2
@@ -168,23 +168,15 @@ def analyze_iter(vl, scaling_ratio=1.0):
             dtype=np.float32,
         )
         base_masked_extended[max_shift:-max_shift, max_shift:-max_shift] = base_masked
-        base_extended_rect = Rect.from_bounds(
-            -max_shift,
-            width + max_shift,
-            -max_shift,
-            height + max_shift,
+
+        base_imagerect = ImageRect(
+            image=base_masked_extended,
+            lefttop=(-max_shift, -max_shift),
         )
-        next_rect = Rect.from_bounds(
-            0,
-            width,
-            0,
-            height,
-        )
+        next_imagerect = ImageRect(image=next_masked, lefttop=(0, 0))
         # scoreとは、2つの画像のピクセル内積。1に近いほど画像が似ている=よく重なる。
         # match_rectはrect付き行列。
-        matchrect = match_rect(
-            base_masked_extended, base_extended_rect, next_masked, next_rect
-        )
+        matchrect = match_rect(base_imagerect, next_imagerect)
 
         yield frame_index, abs_loc, matchrect, unblurred_scaled_frame
 
