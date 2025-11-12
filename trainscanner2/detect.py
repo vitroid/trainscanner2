@@ -121,21 +121,21 @@ class MotionDetector:
             matchrect.plot(label=f"{frame_index=}")
 
         maxima = [
-            (int(x), int(y), value)
+            ((x, y), value)
             for (x, y), value in sorted(
-                matchrect.peaks(
-                    height=min_score,
-                ),
+                matchrect.peaks(height=min_score, subpixel=True),
                 key=lambda x: x[1],
                 reverse=True,
             )
             if int(x) != 0 or int(y) != 0
         ][:num_peaks]
 
-        maxima_values = {(x, y): value for x, y, value in maxima}
+        maxima = dict(maxima)
 
-        maxima_list = np.array(list(maxima_values.keys()))
-        self.logger.info(f"{maxima_values=}")
+        maxima_list = np.array(list(maxima.keys()))
+        self.logger.info(f"maxima")
+        for xy, value in maxima.items():
+            self.logger.info(f"{xy=} {value=}")
 
         unassigned_maxima = {tuple(xy) for xy in maxima_list}
         missed_paths = set(self.paths.keys())
@@ -158,7 +158,7 @@ class MotionDetector:
                     xy = tuple(xy)
                     # pathを更新する。
                     self.paths[path_label].update(
-                        xy=xy, value=(frame_index, maxima_values[xy])
+                        xy=xy, value=(frame_index, maxima[xy])
                     )
                     # 極大は割当て済み
                     unassigned_maxima -= {xy}
@@ -182,7 +182,7 @@ class MotionDetector:
             # 新しいパスを開始する
             self.paths[self.next_label] = Path(
                 xy=xy,
-                value=(frame_index, maxima_values[xy]),
+                value=(frame_index, maxima[xy]),
                 id=self.next_label,
             )
             self.next_label += 1

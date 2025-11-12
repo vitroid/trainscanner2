@@ -157,26 +157,31 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         )
 
         # video frame index, absolute location of the frame, matchscore
-        (vx, vy), max_val = matchrect.peak()
+        (vx, vy), max_val = matchrect.peak(subpixel=True)
         dx += vx
         dy += vy
 
-        preview_scale = (
-            1000 * 1000 / (base_frame.shape[0] * base_frame.shape[1])
-        ) ** 0.5
-        if preview_scale > 1.0:
-            preview_scale = 1.0
-        base_scaled = cv2.resize(base_frame, (0, 0), fx=preview_scale, fy=preview_scale)
-        next_scaled = cv2.resize(next_frame, (0, 0), fx=preview_scale, fy=preview_scale)
-        diff = diffImage(
-            base_scaled,
-            next_scaled,
-            -dx * preview_scale,
-            -dy * preview_scale,
-            mode="checker",
-        )
-        cv2.imshow("diff", diff)
-        cv2.waitKey(1)
+        if logger.getEffectiveLevel() == DEBUG:
+            preview_scale = (
+                1000 * 1000 / (base_frame.shape[0] * base_frame.shape[1])
+            ) ** 0.5
+            if preview_scale > 1.0:
+                preview_scale = 1.0
+            base_scaled = cv2.resize(
+                base_frame, (0, 0), fx=preview_scale, fy=preview_scale
+            )
+            next_scaled = cv2.resize(
+                next_frame, (0, 0), fx=preview_scale, fy=preview_scale
+            )
+            diff = diffImage(
+                base_scaled,
+                next_scaled,
+                -dx * preview_scale,
+                -dy * preview_scale,
+                mode="checker",
+            )
+            cv2.imshow("diff", diff)
+            cv2.waitKey(1)
 
         if dumped is None:
             dumped = np.array((dx, dy))
