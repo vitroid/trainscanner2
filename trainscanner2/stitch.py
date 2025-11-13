@@ -124,8 +124,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         max_shift = int(magnify)
         # frame_infoには既に現在のhistory要素が入っている
         dx, dy = (
-            frame_info["delta_x"] * magnify,
-            frame_info["delta_y"] * magnify,
+            int(frame_info["delta_x"] * magnify),
+            int(frame_info["delta_y"] * magnify),
         )
 
         base_masked_extended = np.zeros(
