@@ -149,9 +149,10 @@ class ImageStripsWidget(QWidget):
             self.cached_pixmap = cv2_to_qpixmap(combined)
 
         # 全体の幅を計算（スクロールバー用）
+        # shapesを使う（キャッシュモードでも動作する）
         self.total_width = sum(
-            img.shape[1] + (1 if self.show_gaps else 0)  # 隙間分を加算
-            for img in self.imagestrips.images
+            shape[1] + (1 if self.show_gaps else 0)  # 隙間分を加算
+            for shape in self.imagestrips.shapes
         )
         if (
             self.imagestrips.buffer is not None

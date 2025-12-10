@@ -60,7 +60,10 @@ class ImageStrips:
                 (np.linspace(0, 1.0, displacement), np.ones(imagerect.width // 2))
             )
             elim = imagerect.width - alpha.shape[0]
+            if elim < 0:
+                return  # どういうケース???
             _, overlay = imagerect.split_vertically(elim)
+            print(elim, displacement, overlay.shape, alpha.shape, imagerect.width)
 
             new_buffer = ImageRect()
             new_buffer.put_imagerect(self.buffer)

@@ -134,10 +134,13 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         )
         base_masked_extended[max_shift:-max_shift, max_shift:-max_shift] = base_masked
 
-        M = np.array([[1, 0, -dx], [0, 1, -dy]])
-        base_masked_extended = cv2.warpAffine(
-            base_masked_extended, M, (width + 2 * max_shift, height + 2 * max_shift)
-        )
+        # warpAffineを使わないほうが良い。
+        # M = np.array([[1, 0, -dx], [0, 1, -dy]])
+        # base_masked_extended = cv2.warpAffine(
+        #     base_masked_extended, M, (width + 2 * max_shift, height + 2 * max_shift)
+        # )
+        base_masked_extended = np.roll(base_masked_extended, (-dy, -dx), axis=(0, 1))
+        # print(dx, dy)
         # scoreとは、2つの画像のピクセル内積。1に近いほど画像が似ている=よく重なる。
         # matchscoreはtick付き行列。
         base_imagerect = ImageRect(
@@ -151,6 +154,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         (vx, vy), max_val = matchrect.peak(subpixel=True)
         dx += vx
         dy += vy
+        # print(dx, dy)
+        # print()
 
         if logger.getEffectiveLevel() == DEBUG:
             preview_scale = (

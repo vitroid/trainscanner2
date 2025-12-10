@@ -100,11 +100,17 @@ def main():
     # 残りのパスを完了として処理
     ## これ要るのか?
     for path_id, history in motiondetector.done():
+        if path_id in renderer.renderers:
+            quality = renderer.renderers[path_id].quality
+            logger.info(
+                f"Removed renderer {path_id}: 動画処理完了 (quality: {quality:.3f})"
+            )
         renderer.done(id=path_id)
 
     # 処理完了後、低品質ウィンドウを最終確認（処理中も随時閉じられている）
-    logger.info("Processing complete. Final check for low-quality windows...")
-    renderer.close_low_quality_windows(quality_ratio=0.5)
+    # thresholdとの比較とそれによるRemoval処理は一旦停止（ユーザー要求）
+    # logger.info("Processing complete. Final check for low-quality windows...")
+    # renderer.close_low_quality_windows(quality_ratio=0.5)
 
     # PyQt6ウィンドウが全て閉じられるまで待機
     logger.info("Close remaining windows to exit.")

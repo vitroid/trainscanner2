@@ -954,12 +954,23 @@ class MultiViewWindow(QMainWindow):
             f"Path {path_id} widget added to vertical layout and made visible"
         )
 
-    def remove_path(self, path_id: int):
-        """Pathを削除"""
+    def remove_path(self, path_id: int, reason: str = "不明"):
+        """
+        Pathを削除
+
+        Args:
+            path_id: 削除するPathのID
+            reason: 削除理由（ログ表示用）
+        """
         if path_id not in self.path_widgets:
             return
 
         path_widget = self.path_widgets[path_id]
+
+        # 削除前に品質情報を取得
+        quality = None
+        if path_id in self.renderers and hasattr(self.renderers[path_id], "quality"):
+            quality = self.renderers[path_id].quality
 
         # 3. 縦にstackしたパネルから削除
         self.panels_layout.removeWidget(path_widget)
@@ -973,7 +984,11 @@ class MultiViewWindow(QMainWindow):
         # パネルコンテナのサイズを調整
         self._adjust_panels_container_size()
 
-        self.logger.info(f"Removed path {path_id} from MultiViewWindow")
+        # 完成した画像を削除する場合はログに残す
+        quality_info = f" (quality: {quality:.3f})" if quality is not None else ""
+        self.logger.info(
+            f"Removed path {path_id} from MultiViewWindow: {reason}{quality_info}"
+        )
 
     def _sort_panels_by_quality(self):
         """パネルを品質が高い順に並べ替える"""
@@ -1110,10 +1125,10 @@ class MultiViewManager:
             self.create_window()
         self.window.add_path(path_id, render_one)
 
-    def remove_path(self, path_id: int):
+    def remove_path(self, path_id: int, reason: str = "不明"):
         """Pathを削除"""
         if self.window is not None:
-            self.window.remove_path(path_id)
+            self.window.remove_path(path_id, reason=reason)
 
     def set_active_paths(self, active_path_ids):
         """MotionDetectorでアクティブなPath IDをMultiViewに伝える"""

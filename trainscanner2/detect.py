@@ -62,7 +62,7 @@ class Path:
     def missed(self, dummy_value):
         # 予測値でupdateする(?)
         xy = self.predicted
-        self.update((int(xy[0]), int(xy[1])), value=dummy_value, missed=True)
+        self.update(xy=xy, value=dummy_value, missed=True)
         return self.missed_duration
 
     # 軌道に一番近い点と、それとの距離を返す。
@@ -78,6 +78,7 @@ class MotionDetector:
     def __init__(self):
         self.paths = {}
         self.next_label = 0
+        self.log = dict()
 
     def done(self):
         # 最後まで生きのこったpathをpurgeする。
@@ -85,12 +86,18 @@ class MotionDetector:
         for path in list(self.paths.keys()):
             yield path, self.paths[path].history
 
+        # save self.log for debug.
+        with open("peaks.log", "w") as f:
+            for frame, value in self.log.items():
+                for xy, remarks in value.items():
+                    f.write(f"{frame} {xy[0]} {xy[1]} {remarks}\n")
+
     def _detect(
         self,
         matchrect: MatchRect,
         frame_index: int = None,
         plot: bool = False,
-        max_miss: int = 5,
+        max_miss: int = 10,
         min_score: float = 0.2,
         num_peaks: int = 3,
         velocity_uncertainty: float = 0.05,
@@ -119,17 +126,24 @@ class MotionDetector:
         if self.logger.getEffectiveLevel() == DEBUG:
             matchrect.plot(label=f"{frame_index=}")
 
+        self.log[frame_index] = dict()
+        this_log = self.log[frame_index]
+
         maxima = [
-            ((x, y), value)
+            ((float(x), float(y)), value)
             for (x, y), value in sorted(
                 matchrect.peaks(height=min_score, subpixel=True),
                 key=lambda x: x[1],
                 reverse=True,
             )
-            if int(x) != 0 or int(y) != 0
+            if np.floor(x + 0.5) != 0.0 or np.floor(y + 0.5) != 0.0
         ][:num_peaks]
 
         maxima = dict(maxima)
+
+        # top 3 peaksにマークする。
+        for xy, value in maxima.items():
+            this_log[xy] = f"top3:{value};"
 
         maxima_list = np.array(list(maxima.keys()))
         self.logger.info(f"maxima")
@@ -164,12 +178,20 @@ class MotionDetector:
                     # パスも割当て済み
                     missed_paths -= {path_label}
 
+                    this_log[xy] += f"assigned:{path_label};"
+
         # まだ極大がみつかっていないパスについては、
         for path_label in missed_paths:
             # 予測値でごまかす
             missed_duration = self.paths[path_label].missed(
                 dummy_value=(frame_index, 0)
             )
+            this_path = self.paths[path_label]
+            x, y = this_path.history[-1].xy
+            x = float(x)
+            y = float(y)
+            assert (x, y) not in this_log
+            this_log[x, y] = f"missed:{path_label};"
             # しかし連続でmax_miss回みのがした場合は、あきらめ、パスをyieldする処理に進む。
             if missed_duration >= max_miss:
                 self.logger.debug(f"long missed {path_label=} {missed_duration=}")
@@ -185,6 +207,7 @@ class MotionDetector:
                 id=self.next_label,
             )
             self.next_label += 1
+            this_log[xy] += f"new:{self.next_label};"
 
         # パスの合流を監視する。
         path_labels = list(self.paths.keys())
@@ -195,21 +218,34 @@ class MotionDetector:
         for path_label in path_labels:
             if len(self.paths[path_label].history) < 3:
                 continue
-            tail = tuple(
+            tail_intxy = tuple(
                 [
-                    (int(h.xy[0]), int(h.xy[1]))
+                    (np.floor(h.xy[0] + 0.5), np.floor(h.xy[1] + 0.5))
                     for h in self.paths[path_label].history[-3:]
                 ]
             )
             # 2つのパスの間で、最後の3点の座標がまったく同じ場合は、パスが合流したとみなし、長い方(番号が若い方)を残し、短い方は抹消する。
-            if tail in final_path:
+            if tail_intxy in final_path:
                 # 最後3frameの軌道が同じ場合は、新しいほうを廃止する。
                 self.logger.debug(
-                    f"The path {path_label} merges with final_path {final_path[tail]} {tail=}."
+                    f"The path {path_label} merges with final_path {final_path[tail_intxy]} {tail_intxy=}."
                 )
                 dropped_paths.add(path_label)
+                persist = final_path[tail_intxy]
+                my_last_xy = self.paths[persist].history[-1].xy
+                print(f"{self.paths[persist].history=}")
+                x = float(my_last_xy[0])
+                y = float(my_last_xy[1])
+                print(
+                    f"{my_last_xy=} {type(my_last_xy)=} {final_path[tail_intxy]=} {type(final_path[tail_intxy])=}"
+                )
+                print(f"{this_log.keys()=}")
+                if (x, y) in this_log:
+                    this_log[x, y] += f"merged:{path_label};"
+                else:
+                    this_log[x, y] = f"merged(?):{path_label};"
             else:
-                final_path[tail] = path_label
+                final_path[tail_intxy] = path_label
 
         for tail, label in final_path.items():
             self.logger.debug(f"{label=} {tail=} {len(self.paths[label].history)=}")

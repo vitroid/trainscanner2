@@ -72,6 +72,42 @@ class BlurMask2:
         return self.mask
 
 
+class BlurMask3:
+    """
+    内部で差分計算をするようにする。
+    隣接フレームではなく、すこし遠いフレームを比較することで、遅い列車でも検出できるようにする。
+    """
+
+    logger = getLogger(__name__)
+
+    def __init__(self, interval=30):
+        self.images = FIFO(interval + 1)
+        self.mask = None
+
+    def add_frame(self, std_img):
+        # assert diff does not contain nan
+        self.images.append(std_img)
+
+        diff = (self.images.queue[0] - self.images.queue[-1]) ** 2
+
+        # 型をfloat32に統一
+        diff = diff.astype(np.float32, copy=False)
+        if self.mask is None:
+            self.mask = np.zeros_like(diff)
+
+        # decay
+        decayed = self.mask * 0.9
+        # print(f"{diff.shape=}, {decayed.shape=}")
+        # pull up
+        self.mask = cv2.max(diff, decayed)
+
+        cv2.imshow("diff", diff)
+        cv2.imshow("mask", self.mask / np.max(self.mask))
+        self.logger.debug("----------")
+        cv2.waitKey(0 if self.logger.getEffectiveLevel() == DEBUG else 1)
+        return self.mask
+
+
 def normalize(x):
     return (x - np.min(x)) / (np.max(x) - np.min(x))
 
@@ -83,7 +119,7 @@ def analyze_iter(vl, scaling_ratio=1.0):
     logger = getLogger(__name__)
 
     # diff画像をたくわえ、動きの大きい領域を検出する。
-    blurmask = BlurMask2(lifetime=20)
+    blurmask = BlurMask3()
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
     antishaker = AntiShaker2(velocity=1)
@@ -147,9 +183,10 @@ def analyze_iter(vl, scaling_ratio=1.0):
         antimasked_hdr_next = std_hdr(next_frame) * antimask
 
         # 二乗差分画像を作る
-        diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
+        # diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
         # blurmaskに追加する。maskは平均化されたマスク
-        mask = blurmask.add_frame(diff)
+        # mask = blurmask.add_frame(diff)
+        mask = blurmask.add_frame(antimasked_hdr_next)
 
         # maskは、diffの値が大きいピクセル。
         logger.debug(f"mask {np.min(mask)}, {np.max(mask)}")

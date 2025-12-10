@@ -459,9 +459,11 @@ class Render:
             self.max_quality = q
             self.logger.debug(f"Max quality updated: {self.max_quality}")
             # 閾値が上がったので、低品質ウィンドウを閉じる
-            self._check_and_close_low_quality_windows()
+            # thresholdとの比較とそれによるRemoval処理は一旦停止（ユーザー要求）
+            # self._check_and_close_low_quality_windows()
             # multiview_managerからも低品質パネルを削除
-            self._remove_low_quality_from_multiview()
+            # 一旦表示したパネルは消さないようにする（ユーザー要求）
+            # self._remove_low_quality_from_multiview()
 
         # 閾値を下げる。あるいはこれを使わないほうがいいかも
         self.max_quality *= 0.995
@@ -482,27 +484,28 @@ class Render:
 
     def done(self, id):
         """
-        Pathの処理を終了（品質が閾値以下の場合）
+        Pathの処理を終了
 
-        【呼ばれるタイミング】Render_one.put()で品質が閾値以下になったとき
+        【呼ばれるタイミング】
+        - 動画処理完了時（全Pathに対して）
+        - 品質が閾値以下の場合（将来的に）
+
         【動作】
         1. ウィンドウを閉じる（または閉じない）
         2. Pathを削除（メモリ解放、以降の処理をスキップ）
+
+        Args:
+            id: PathのID
         """
         if id in self.renderers:
             r = self.renderers[id]
             r.done()
 
-            # マルチビューウィンドウからも削除
-            if self.multiview_manager is not None:
-                self.logger.info(
-                    f"Removing path {id} from multiview manager (quality too low)"
-                )
-                self.multiview_manager.remove_path(id)
+            # マルチビューウィンドウからは削除しない（動画処理完了時も画像を表示し続けるため）
+            # 品質が低い場合は _remove_low_quality_from_multiview() で削除される
 
             # Pathを削除（メモリ解放、以降の処理をスキップ）
             del self.renderers[id]
-            self.logger.debug(f"Removed renderer {id}")
 
     def remove_renderer(self, id):
         """
@@ -600,8 +603,9 @@ class Render:
                 continue
 
             renderer = self.renderers[id]
-            self.logger.debug(
-                f"Auto-closing window {id}: quality={renderer.quality:.3f} < threshold={threshold:.3f}"
+            self.logger.info(
+                f"Removed renderer {id}: 品質が閾値以下 "
+                f"(quality={renderer.quality:.3f} < threshold={threshold:.3f}, max_quality={self.max_quality:.3f})"
             )
             if self.window_manager:
                 # PyQt6の場合: close()を呼ぶとcloseEventが発火して自動的に削除される
@@ -649,10 +653,12 @@ class Render:
 
         # パネルを削除
         for path_id in to_remove:
-            self.logger.info(
-                f"Removing low quality panel {path_id} from multiview (quality: {self.renderers[path_id].quality:.3f})"
+            renderer = self.renderers[path_id]
+            reason = (
+                f"品質が閾値以下 "
+                f"(quality={renderer.quality:.3f} < threshold={threshold:.3f}, max_quality={self.max_quality:.3f})"
             )
-            self.multiview_manager.remove_path(path_id)
+            self.multiview_manager.remove_path(path_id, reason=reason)
 
     def close_low_quality_windows(self, quality_ratio: float = 0.5):
         """

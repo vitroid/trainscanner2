@@ -29,6 +29,7 @@ class AntiShaker2:
         self._velocity = velocity
 
     def add_frame(self, frame, mask):
+        # subpixel matchingは要らないだろう。
         h, w = frame.shape[:2]
         frame_std = standardize(frame)
 
