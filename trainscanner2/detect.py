@@ -20,7 +20,9 @@ class Path:
 
     logger = getLogger(__name__)
 
-    def __init__(self, id, xy, value):
+    def __init__(
+        self, id: int, frame_index: int, xy: tuple[float, float], value: float
+    ):
         self.id = id
         self.mean = np.array(xy)
         self.covariance = np.eye(2)
@@ -35,7 +37,7 @@ class Path:
         # 連続する欠測の回数
         self.missed_duration = 0
         # 実測値の履歴。
-        self.history = [PathItem(xy=xy, value=value)]
+        self.history = [PathItem(frame_index=frame_index, xy=xy, value=value)]
 
     # 予測し、結果は内部に保存する。
     def predict(self):
@@ -44,11 +46,13 @@ class Path:
         return self.predicted
 
     # 実測値を記録する。
-    def update(self, xy, value, missed=False):
+    def update(
+        self, frame_index: int, xy: tuple[float, float], value: float, missed=False
+    ):
         new_mean, new_covariance = self.kf.filter_update(
             self.mean, self.covariance, observation=np.array(xy)
         )
-        self.history.append(PathItem(xy=xy, value=value))
+        self.history.append(PathItem(frame_index=frame_index, xy=xy, value=value))
         self.mean = new_mean
         self.covariance = new_covariance
         if missed:
@@ -59,10 +63,10 @@ class Path:
         #     self._render(frame)
 
     # 欠測した場合の処理。予測値で補う。
-    def missed(self, dummy_value):
+    def missed(self, frame_index: int, dummy_value: float):
         # 予測値でupdateする(?)
         xy = self.predicted
-        self.update(xy=xy, value=dummy_value, missed=True)
+        self.update(frame_index=frame_index, xy=xy, value=dummy_value, missed=True)
         return self.missed_duration
 
     # 軌道に一番近い点と、それとの距離を返す。
@@ -164,14 +168,14 @@ class MotionDetector:
                 L = np.linalg.norm(xy)
                 threshold = L * velocity_uncertainty
                 # これを大きめにしておかないと、分断されてしまうことがある。
-                if threshold < 1.5:
-                    threshold = 1.5
+                if threshold < 2.5:
+                    threshold = 2.5
                 # 一番近い極大がmax_shake以内にあれば (てぶれ等による多少のずれは許容する)
                 if xy is not None and d <= threshold:
                     xy = tuple(xy)
                     # pathを更新する。
                     self.paths[path_label].update(
-                        xy=xy, value=(frame_index, maxima[xy])
+                        frame_index=frame_index, xy=xy, value=maxima[xy]
                     )
                     # 極大は割当て済み
                     unassigned_maxima -= {xy}
@@ -184,7 +188,8 @@ class MotionDetector:
         for path_label in missed_paths:
             # 予測値でごまかす
             missed_duration = self.paths[path_label].missed(
-                dummy_value=(frame_index, 0)
+                frame_index=frame_index,
+                dummy_value=0,
             )
             this_path = self.paths[path_label]
             x, y = this_path.history[-1].xy
@@ -202,8 +207,9 @@ class MotionDetector:
             xy = tuple(xy)
             # 新しいパスを開始する
             self.paths[self.next_label] = Path(
+                frame_index=frame_index,
                 xy=xy,
-                value=(frame_index, maxima[xy]),
+                value=maxima[xy],
                 id=self.next_label,
             )
             self.next_label += 1

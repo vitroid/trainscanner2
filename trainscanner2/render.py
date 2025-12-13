@@ -96,8 +96,7 @@ class Render_one:
             self.canvas = ImageStrips(cache=self.cache)
 
         delta = h.xy
-        frame_index, value = h.value
-        self.logger.debug(f"{id=} {frame_index=} {delta=} ")
+        self.logger.debug(f"{id=} {delta=} ")
         dx, dy = delta
         dd = (dx**2 + dy**2) ** 0.5
         if dd != 0:
@@ -191,7 +190,7 @@ class Render_one:
     @property
     def quality(self):
         # 最後の5フレームで判別する。
-        return np.mean([h.value[1] for h in self.pathitem_history[-20:]])
+        return np.mean([h.value for h in self.pathitem_history[-20:]])
 
     def export_history(self):
         """
@@ -230,7 +229,6 @@ class Render_one:
         history_data = []
 
         for idx, h in enumerate(self.pathitem_history):
-            frame_index, match_score = h.value
             delta_x, delta_y = h.xy
 
             # absolute_positionを取得（保存されていれば）
@@ -245,8 +243,8 @@ class Render_one:
 
             history_data.append(
                 {
-                    "frame_index": int(frame_index),
-                    "match_score": float(match_score),
+                    "frame_index": int(h.frame_index),
+                    "match_score": float(h.value),
                     "delta_x": float(delta_x),
                     "delta_y": float(delta_y),
                     "train_position": float(train_pos),
@@ -309,10 +307,19 @@ class Render_one:
                 self.logger.debug(f"Saved image to {image_path}")
 
         # stitching履歴を保存
-        history_data = self.export_history()
-        with open(history_path, "w", encoding="utf-8") as f:
-            json.dump(history_data, f, indent=2, ensure_ascii=False)
-        self.logger.debug(f"Saved history to {history_path}")
+        try:
+            history_data = self.export_history()
+            print(history_data)
+            with open(history_path, "w", encoding="utf-8") as f:
+                json.dump(history_data, f, indent=2, ensure_ascii=False)
+            self.logger.debug(f"Saved history to {history_path}")
+        except Exception as e:
+            import sys
+            import traceback
+
+            print(f"エラー: stitching履歴の保存に失敗しました: {e}")
+            traceback.print_exc()
+            sys.exit(1)
 
         return image_path, history_path
 
@@ -408,8 +415,8 @@ class Render:
             # （put()メソッド内でcanvasが初期化されるため）
 
         r.put(
-            frame,
-            historyitem,
+            frame=frame,
+            pathitem=historyitem,
             absolute_position=absolute_position,
         )
 
@@ -451,7 +458,7 @@ class Render:
                 self.logger.debug("- canvas is None")
             if r.quality <= 0.3:
                 self.logger.debug(f"- {r.quality=} is less than 0.3")
-                self.logger.debug(f"{[h.value[1] for h in r.pathitem_history[-20:]]}")
+                self.logger.debug(f"{[h.value for h in r.pathitem_history[-20:]]}")
 
         q = r.quality
         # 最高品質が更新されたら、低品質ウィンドウをチェックして閉じる

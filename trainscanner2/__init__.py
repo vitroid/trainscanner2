@@ -7,6 +7,7 @@ from trainscanner.image import standardize
 
 @dataclass
 class PathItem:
+    frame_index: int
     xy: tuple[float, float]
     value: list
 

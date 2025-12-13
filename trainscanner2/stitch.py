@@ -267,7 +267,7 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
     ):
         render.put(
             unblurred_frame,
-            PathItem(xy=delta, value=(frame_index, max_val)),
+            PathItem(frame_index=frame_index, xy=delta, value=max_val),
             absolute_position=absolute_position,
         )
 
