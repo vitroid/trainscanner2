@@ -2,7 +2,19 @@
 
 新しい TrainScanner のプロトタイプです。列車スキャン画像をより気軽に作成できるようになりました。
 
+## インストール
 
+```shell
+pip install git+https://github.com/vitroid/trainscanner2.git
+```
+
+## 使い方
+
+```shell
+trainscanner2
+```
+
+実行すると、Drag&Drop 用のウィンドウが表示されますので、そこに動画ファイルを投げこんで下さい。
 
 ## 旧 TrainScanner に対する長所
 
