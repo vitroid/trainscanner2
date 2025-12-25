@@ -52,7 +52,17 @@ def process_video(videofile: str, multiview_manager=None, wait=False):
     motiondetector = MotionDetector()
 
     for frame_index, absolute_position, matchscore, frame in iterator():
-        paths, dropped_paths, active_path_ids = motiondetector._detect(matchscore, frame_index=frame_index)
+        # 中断チェック：新しいファイルがドロップされたら即座に終了する
+        if multiview_manager and hasattr(multiview_manager.window, "interrupted") and multiview_manager.window.interrupted:
+            logger.info("Processing interrupted by new drop.")
+            return
+
+        if multiview_manager:
+            multiview_manager.update_preview(frame)
+
+        paths, dropped_paths, active_path_ids = motiondetector._detect(
+            matchscore, frame_index=frame_index
+        )
 
         for id, path in paths.items():
             renderer.put(id, frame, path.history[-1], absolute_position=absolute_position)
@@ -78,7 +88,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False):
                 all_paths_data[str(path_id)] = path_data
 
         if all_paths_data:
-            dump_file = os.path.splitext(videofile)[0] + ".tsdump"
+            dump_file = os.path.splitext(videofile)[0] + ".ts2dump"
             with open(dump_file, "w", encoding="utf-8") as f:
                 json.dump(all_paths_data, f, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -157,9 +167,8 @@ if PYQT6_AVAILABLE:
                 
         def dropEvent(self, event: QDropEvent):
             logger = getLogger(__name__)
-            if self.parent_window and getattr(self.parent_window, 'processing', False):
-                event.ignore()
-                return
+            # 処理中でもドロップを受け付けるように変更（中断フラグで制御するためチェックを削除）
+            
             if event.mimeData().hasUrls():
                 urls = event.mimeData().urls()
                 if urls:
@@ -170,8 +179,9 @@ if PYQT6_AVAILABLE:
                         # ドロップされたら隠す
                         self.hide()
                         if self.parent_window:
-                            # 処理開始フラグを立てる（以降、ドラッグ時のみ表示されるようになる）
+                            # 処理開始フラグを立てる
                             self.parent_window.processing_started = True
+                            # 100msの遅延を入れてOSのクリーンアップ時間を確保してから開始指示
                             QTimer.singleShot(100, lambda: self.parent_window.start_processing(file_path))
                         return
             event.ignore()
@@ -213,23 +223,36 @@ def main():
         drop_area.show()
         drop_area.raise_()
         
+        # 処理中フラグ
         manager.window.processing = False
+        # 中断フラグ
+        manager.window.interrupted = False
         manager.window.processing_started = False
         
         # ウィンドウ自体でもドラッグを受け取れるようにし、DropAreaを表示する
         manager.window.setAcceptDrops(True)
         def window_dragEnterEvent(event):
-            if not manager.window.processing:
-                urls = event.mimeData().urls()
-                if urls and drop_area._is_valid_video_file(urls[0].toLocalFile()):
-                    drop_area.show()
-                    drop_area.raise_()
-                    event.acceptProposedAction()
+            # 処理中であってもドラッグを受け入れる
+            urls = event.mimeData().urls()
+            if urls and drop_area._is_valid_video_file(urls[0].toLocalFile()):
+                drop_area.show()
+                drop_area.raise_()
+                event.acceptProposedAction()
         manager.window.dragEnterEvent = window_dragEnterEvent
 
         def start_processing(videofile: str):
             logger = getLogger(__name__)
-            if manager.window.processing: return
+            
+            # もし既に処理中なら、中断フラグを立てて、少し待ってから再試行する
+            if manager.window.processing:
+                logger.info("Already processing. Signaling interruption and rescheduling...")
+                manager.window.interrupted = True
+                # 現在のループが終了して processing = False になるまで待って再試行
+                QTimer.singleShot(200, lambda: start_processing(videofile))
+                return
+
+            # フラグを初期化して処理開始
+            manager.window.interrupted = False
             manager.window.processing = True
             
             # ドロップエリアを隠す（処理中はパネルを見せる）
@@ -238,6 +261,7 @@ def main():
             try:
                 process_video(videofile, multiview_manager=manager, wait=False)
             finally:
+                # 処理が終わったら（または中断されたら）フラグを下ろす
                 manager.window.processing = False
                 logger.info("Ready for next drop.")
         

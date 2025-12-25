@@ -42,6 +42,23 @@ except Exception as e:
 from trainscanner2.imagestrips import ImageStrips
 
 
+def cv2_to_qpixmap(cv_img):
+    """OpenCVの画像(BGR)をQPixmapに変換する"""
+    if cv_img is None:
+        return None
+    try:
+        height, width, channel = cv_img.shape
+        bytes_per_line = 3 * width
+        # BGRからRGBに変換
+        rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        q_img = QImage(
+            rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
+        )
+        return QPixmap.fromImage(q_img)
+    except Exception:
+        return None
+
+
 def create_styled_message_box(parent, icon, title, text):
     """
     スタイルが適用されたQMessageBoxを作成する
@@ -1022,6 +1039,25 @@ class MultiViewWindow(QMainWindow):
         # スクロールエリアをメインレイアウトに追加（ウィンドウサイズに固定）
         main_layout.addWidget(self.scroll_area)
 
+        # プレビュー表示用ラベル（右下にフローティング）
+        self.preview_label = QLabel(self)
+        self.preview_label.setObjectName("previewLabel")
+        self.preview_label.setFixedSize(240, 135)  # 16:9
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setText("Waiting for video...")
+        self.preview_label.setStyleSheet(
+            """
+            #previewLabel {
+                background-color: rgba(0, 0, 0, 150);
+                border: 2px solid #555;
+                border-radius: 5px;
+                color: white;
+                font-size: 10px;
+            }
+        """
+        )
+        self.preview_label.hide()
+
         # キーボードショートカット
         close_shortcut = QShortcut(QKeySequence.StandardKey.Close, self)
         close_shortcut.activated.connect(self.close)
@@ -1223,6 +1259,13 @@ class MultiViewWindow(QMainWindow):
         super().resizeEvent(event)
         # パネルコンテナのサイズを調整
         self._adjust_panels_container_size()
+        # プレビューラベルの位置を調整
+        if hasattr(self, "preview_label"):
+            margin = 20
+            self.preview_label.move(
+                self.width() - self.preview_label.width() - margin,
+                self.height() - self.preview_label.height() - margin,
+            )
 
     def set_video_base(self, video_base: str):
         """ビデオのベース名を設定し、タイトルを更新する"""
@@ -1233,14 +1276,24 @@ class MultiViewWindow(QMainWindow):
         else:
             self.setWindowTitle("Train Scanner - Multi View")
 
-    def set_video_base(self, video_base: str):
-        """ビデオのベース名を設定し、タイトルを更新する"""
-        self.video_base = video_base
-        if video_base:
-            video_basename = os.path.basename(video_base)
-            self.setWindowTitle(f"Train Scanner - {video_basename}")
-        else:
-            self.setWindowTitle("Train Scanner - Multi View")
+    def update_preview(self, cv_img):
+        """プレビュー画像を更新"""
+        if cv_img is None or not PYQT6_AVAILABLE:
+            return
+
+        # 小さくリサイズ（アスペクト比維持）
+        h, w = cv_img.shape[:2]
+        target_w = self.preview_label.width()
+        target_h = self.preview_label.height()
+
+        scale = min(target_w / w, target_h / h)
+        small_img = cv2.resize(cv_img, (0, 0), fx=scale, fy=scale)
+
+        pixmap = cv2_to_qpixmap(small_img)
+        if pixmap:
+            self.preview_label.setPixmap(pixmap)
+            if self.preview_label.isHidden():
+                self.preview_label.show()
 
     def clear_all_paths(self):
         """すべてのPath（パネル）を削除して初期状態に戻す"""
@@ -1318,6 +1371,11 @@ class MultiViewManager:
         """すべてのPathをクリア"""
         if self.window is not None:
             self.window.clear_all_paths()
+
+    def update_preview(self, cv_img):
+        """プレビューを更新"""
+        if self.window is not None:
+            self.window.update_preview(cv_img)
 
     def set_video_base(self, video_base: str):
         """ビデオのベース名を設定"""

@@ -109,7 +109,7 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
         # blurmaskに追加する。maskは平均化されたマスク
         mask = blurmask.add_frame(diff)
-        if SHOW_DEBUG_WINDOWS:
+        if logger.getEffectiveLevel() <= INFO:
             cv2.imshow("diff", diff)
 
         # maskは、diffの値が大きいピクセル。

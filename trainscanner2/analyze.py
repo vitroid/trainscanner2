@@ -63,10 +63,11 @@ class BlurMask2:
         decayed = self.mask * (1 - 1 / self.lifetime)
         self.mask = cv2.max(diff, decayed)
 
-        cv2.imshow("diff", diff)
-        cv2.imshow("mask", self.mask / np.max(self.mask))
+        if self.logger.getEffectiveLevel() <= INFO:
+            cv2.imshow("diff", diff)
+            cv2.imshow("mask", self.mask / (np.max(self.mask) + 1e-6))
+            cv2.waitKey(0 if self.logger.getEffectiveLevel() == DEBUG else 1)
         self.logger.debug("----------")
-        cv2.waitKey(0 if self.logger.getEffectiveLevel() == DEBUG else 1)
         return self.mask
 
 
@@ -97,10 +98,11 @@ class BlurMask3:
         decayed = self.mask * 0.9
         self.mask = cv2.max(diff, decayed)
 
-        cv2.imshow("diff", diff)
-        cv2.imshow("mask", self.mask / np.max(self.mask))
+        if self.logger.getEffectiveLevel() <= INFO:
+            cv2.imshow("diff", diff)
+            cv2.imshow("mask", self.mask / (np.max(self.mask) + 1e-6))
+            cv2.waitKey(0 if self.logger.getEffectiveLevel() == DEBUG else 1)
         self.logger.debug("----------")
-        cv2.waitKey(0 if self.logger.getEffectiveLevel() == DEBUG else 1)
         return self.mask
 
 
