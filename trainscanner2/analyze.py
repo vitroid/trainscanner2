@@ -6,8 +6,8 @@ import json
 
 # from sklearn.mixture import GaussianMixture
 from pyperbox import Rect
-from trainscanner.image import match_rect, MatchRect, ImageRect
-from trainscanner.video import video_loader_factory
+from trainscanner2.image import match_rect, MatchRect, ImageRect
+from trainscanner2.video import video_loader_factory
 from trainscanner2 import FIFO, std_hdr
 from trainscanner2.antishake import AntiShaker2
 

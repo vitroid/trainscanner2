@@ -7,7 +7,7 @@ import os
 from logging import getLogger
 import shutil
 
-from trainscanner.image import ImageRect
+from trainscanner2.image import ImageRect
 
 
 class ImageStrips:

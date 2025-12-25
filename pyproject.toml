@@ -6,7 +6,7 @@ authors = [
     {name = "vitroid", email = "vitroid@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -29,8 +29,6 @@ pyqt6 = ">=6.0.0,<7.0.0"
 tqdm = "^4.67.1"
 opencv-python = "^4.8.0"
 # Local dependencies - these must be on PyPI for a successful PyPI release
-tiledimage = {path = "../TiledImage"}
-trainscanner = {path = "../TrainScanner"}
 
 [tool.poetry.scripts]
 trainscanner2 = "trainscanner2.trainscanner2:main"
