@@ -1224,6 +1224,47 @@ class MultiViewWindow(QMainWindow):
         # パネルコンテナのサイズを調整
         self._adjust_panels_container_size()
 
+    def set_video_base(self, video_base: str):
+        """ビデオのベース名を設定し、タイトルを更新する"""
+        self.video_base = video_base
+        if video_base:
+            video_basename = os.path.basename(video_base)
+            self.setWindowTitle(f"Train Scanner - {video_basename}")
+        else:
+            self.setWindowTitle("Train Scanner - Multi View")
+
+    def set_video_base(self, video_base: str):
+        """ビデオのベース名を設定し、タイトルを更新する"""
+        self.video_base = video_base
+        if video_base:
+            video_basename = os.path.basename(video_base)
+            self.setWindowTitle(f"Train Scanner - {video_basename}")
+        else:
+            self.setWindowTitle("Train Scanner - Multi View")
+
+    def clear_all_paths(self):
+        """すべてのPath（パネル）を削除して初期状態に戻す"""
+        self.logger.info("Clearing all paths from MultiViewWindow")
+        
+        # タイマーを一時停止
+        self.update_timer.stop()
+        
+        # すべてのウィジェットを削除
+        for path_id in list(self.path_widgets.keys()):
+            widget = self.path_widgets.pop(path_id)
+            self.panels_layout.removeWidget(widget)
+            widget.deleteLater()
+            
+        # データのクリア
+        self.renderers.clear()
+        self.active_path_ids.clear()
+        
+        # ウィンドウタイトルをリセット
+        self.setWindowTitle("Train Scanner - Multi View")
+        
+        # タイマーを再開
+        self.update_timer.start(1000)
+
     def closeEvent(self, event):
         """ウィンドウが閉じられるとき"""
         self.update_timer.stop()
@@ -1272,6 +1313,16 @@ class MultiViewManager:
                 traceback.print_exc()
                 raise
         return self.window
+
+    def clear_all_paths(self):
+        """すべてのPathをクリア"""
+        if self.window is not None:
+            self.window.clear_all_paths()
+
+    def set_video_base(self, video_base: str):
+        """ビデオのベース名を設定"""
+        if self.window is not None:
+            self.window.set_video_base(video_base)
 
     def add_path(self, path_id: int, render_one: object):
         """Pathを追加"""
