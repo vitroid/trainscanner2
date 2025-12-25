@@ -42,6 +42,50 @@ except Exception as e:
 from trainscanner2.imagestrips import ImageStrips
 
 
+def create_styled_message_box(parent, icon, title, text):
+    """
+    スタイルが適用されたQMessageBoxを作成する
+    
+    アクティブパネルのスタイルがダイアログに影響しないように、
+    明示的にスタイルを設定する。
+    """
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(icon)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    
+    # ダイアログのスタイルを設定（白背景、青ボタン）
+    msg_box.setStyleSheet("""
+        QMessageBox {
+            background-color: #ffffff;
+        }
+        QMessageBox QPushButton {
+            font-size: 11px;
+            padding: 6px 12px;
+            border: 2px solid #3498db;
+            border-radius: 6px;
+            background-color: #3498db;
+            color: #ffffff;
+            font-weight: bold;
+            min-height: 24px;
+            min-width: 80px;
+        }
+        QMessageBox QPushButton:hover {
+            background-color: #2980b9;
+            border-color: #2980b9;
+        }
+        QMessageBox QPushButton:pressed {
+            background-color: #21618c;
+            border-color: #21618c;
+        }
+        QMessageBox QLabel {
+            color: #333333;
+        }
+    """)
+    
+    return msg_box
+
+
 class ProgressButton(QPushButton):
     """プログレス表示機能付きボタン"""
 
@@ -50,6 +94,8 @@ class ProgressButton(QPushButton):
         self.progress = 0
         self.is_processing = False
         self.is_completed = False
+        # 初期スタイルを設定
+        self.update_style()
 
     def set_progress(self, progress):
         """進捗を設定（0-100）"""
@@ -75,68 +121,156 @@ class ProgressButton(QPushButton):
         if self.is_processing:
             # プログレスバー風のスタイル（左から右へバーが伸びる、境界明確）
             progress_percent = self.progress / 100.0
-            self.setStyleSheet(
-                f"""
-                QPushButton {{
-                    font-size: 10px;
-                    padding: 3px;
-                    border: 2px solid #3498db;
-                    border-radius: 4px;
+            button_name = self.objectName() if self.objectName() else ""
+            if button_name:
+                style = f"""
+                QPushButton#{button_name} {{
+                    font-size: 11px;
+                    padding: 6px 12px;
+                    border: 2px solid #27ae60;
+                    border-radius: 6px;
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #2ecc71, stop:{progress_percent - 0.001} #2ecc71, 
+                        stop:0 #27ae60, stop:{progress_percent - 0.001} #27ae60, 
                         stop:{progress_percent} #ecf0f1, stop:1 #ecf0f1);
-                    color: #2c3e50;
+                    color: #ffffff;
                     font-weight: bold;
+                    min-height: 24px;
+                }}
+                QPushButton#{button_name}:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #229954, stop:{progress_percent - 0.001} #229954, 
+                        stop:{progress_percent} #d5dbdb, stop:1 #d5dbdb);
+                    border-color: #229954;
+                }}
+                """
+            else:
+                style = f"""
+                QPushButton {{
+                    font-size: 11px;
+                    padding: 6px 12px;
+                    border: 2px solid #27ae60;
+                    border-radius: 6px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #27ae60, stop:{progress_percent - 0.001} #27ae60, 
+                        stop:{progress_percent} #ecf0f1, stop:1 #ecf0f1);
+                    color: #ffffff;
+                    font-weight: bold;
+                    min-height: 24px;
                 }}
                 QPushButton:hover {{
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #27ae60, stop:{progress_percent - 0.001} #27ae60, 
+                        stop:0 #229954, stop:{progress_percent - 0.001} #229954, 
                         stop:{progress_percent} #d5dbdb, stop:1 #d5dbdb);
+                    border-color: #229954;
                 }}
-            """
-            )
+                """
+            self.setStyleSheet(style)
         elif self.is_completed:
             # 完了後のスタイル（グレー背景、無効化）
-            self.setStyleSheet(
-                """
-                QPushButton {
-                    font-size: 10px;
-                    padding: 3px;
-                    border: 1px solid #95a5a6;
-                    border-radius: 4px;
+            button_name = self.objectName() if self.objectName() else ""
+            if button_name:
+                style = f"""
+                QPushButton#{button_name} {{
+                    font-size: 11px;
+                    padding: 6px 12px;
+                    border: 2px solid #95a5a6;
+                    border-radius: 6px;
+                    background-color: #95a5a6;
+                    color: #ffffff;
+                    font-weight: bold;
+                    min-height: 24px;
+                }}
+                QPushButton#{button_name}:hover {{
+                    background-color: #7f8c8d;
+                    border-color: #7f8c8d;
+                }}
+                QPushButton#{button_name}:disabled {{
                     background-color: #bdc3c7;
-                    color: #7f8c8d;
+                    border-color: #95a5a6;
+                    color: #ffffff;
+                }}
+                """
+            else:
+                style = """
+                QPushButton {
+                    font-size: 11px;
+                    padding: 6px 12px;
+                    border: 2px solid #95a5a6;
+                    border-radius: 6px;
+                    background-color: #95a5a6;
+                    color: #ffffff;
+                    font-weight: bold;
+                    min-height: 24px;
                 }
                 QPushButton:hover {
-                    background-color: #a6b0b1;
+                    background-color: #7f8c8d;
+                    border-color: #7f8c8d;
                 }
                 QPushButton:disabled {
                     background-color: #bdc3c7;
-                    color: #7f8c8d;
+                    border-color: #95a5a6;
+                    color: #ffffff;
                 }
-            """
-            )
+                """
+            self.setStyleSheet(style)
         else:
-            # 通常のスタイル（白背景）
-            self.setStyleSheet(
+            # 通常のスタイル（ボタンらしい見た目）
+            button_name = self.objectName() if self.objectName() else ""
+            if button_name:
+                # objectNameが設定されている場合は、より具体的なセレクタを使用
+                style = f"""
+                QPushButton#{button_name} {{
+                    font-size: 11px;
+                    padding: 6px 12px;
+                    border: 2px solid #3498db;
+                    border-radius: 6px;
+                    background-color: #3498db;
+                    color: #ffffff;
+                    font-weight: bold;
+                    min-height: 24px;
+                }}
+                QPushButton#{button_name}:hover {{
+                    background-color: #2980b9;
+                    border-color: #2980b9;
+                }}
+                QPushButton#{button_name}:pressed {{
+                    background-color: #21618c;
+                    border-color: #21618c;
+                }}
+                QPushButton#{button_name}:disabled {{
+                    background-color: #bdc3c7;
+                    border-color: #95a5a6;
+                    color: #7f8c8d;
+                }}
                 """
+            else:
+                # objectNameが設定されていない場合は通常のセレクタ
+                style = """
                 QPushButton {
-                    font-size: 10px;
-                    padding: 3px;
-                    border: 1px solid #bdc3c7;
-                    border-radius: 4px;
-                    background-color: #ffffff;
-                    color: #2c3e50;
+                    font-size: 11px;
+                    padding: 6px 12px;
+                    border: 2px solid #3498db;
+                    border-radius: 6px;
+                    background-color: #3498db;
+                    color: #ffffff;
+                    font-weight: bold;
+                    min-height: 24px;
                 }
                 QPushButton:hover {
-                    background-color: #f8f9fa;
+                    background-color: #2980b9;
+                    border-color: #2980b9;
+                }
+                QPushButton:pressed {
+                    background-color: #21618c;
+                    border-color: #21618c;
                 }
                 QPushButton:disabled {
                     background-color: #bdc3c7;
+                    border-color: #95a5a6;
                     color: #7f8c8d;
                 }
-            """
-            )
+                """
+            self.setStyleSheet(style)
 
 
 class SaveWorker(QThread):
@@ -371,10 +505,12 @@ class PathViewWidget(QWidget):
 
         # ボタン
         self.save_button = ProgressButton("保存")
+        self.save_button.setObjectName("saveButton")  # objectNameを設定してスタイルを確実に適用
         self.save_button.clicked.connect(self.save_image)
         info_layout.addWidget(self.save_button)
 
         self.save_hires_button = ProgressButton("高精細保存")
+        self.save_hires_button.setObjectName("saveHiresButton")  # objectNameを設定してスタイルを確実に適用
         self.save_hires_button.clicked.connect(self.save_hires_image)
         info_layout.addWidget(self.save_hires_button)
 
@@ -416,7 +552,7 @@ class PathViewWidget(QWidget):
                 self._on_horizontal_scroll_changed
             )
 
-        # 共通スタイル設定
+        # 共通スタイル設定（QPushButtonは除外して、ボタン個別のスタイルを適用）
         self.common_style = """
             QLabel {
                 color: #333;
@@ -530,7 +666,7 @@ class PathViewWidget(QWidget):
         if hasattr(render_one, "score"):
             score = render_one.score
             if score > 0:
-                self.score_label.setText(f"品質: {score:.3f}")
+                self.score_label.setText(f"Score: {score:.3f}")
 
                 # 品質に応じて色を変更
                 if score > 0.7:
@@ -560,14 +696,19 @@ class PathViewWidget(QWidget):
                 # 横スクロールが不要な場合は次回に備えて自動追従を有効化
                 self._auto_scroll = True
 
-        # 最初のframe番号を更新
-        if hasattr(render_one, "history") and render_one.history:
-            first_frame = (
-                render_one.history[0].value[0]
-                if hasattr(render_one.history[0], "value")
-                else "-"
-            )
-            self.frame_label.setText(f"Frame: {first_frame}")
+        # フレーム番号を更新（stitch中は現在のフレーム、完了時は最終フレーム）
+        if hasattr(render_one, "pathitem_history") and render_one.pathitem_history:
+            # 最新のフレーム番号を取得
+            latest_pathitem = render_one.pathitem_history[-1]
+            if hasattr(latest_pathitem, "frame_index"):
+                frame_index = latest_pathitem.frame_index
+                # stitchが終わった場合は「最終フレーム」、進行中は「現在フレーム」と表示
+                if hasattr(render_one, "alive") and not render_one.alive:
+                    self.frame_label.setText(f"最終フレーム: {frame_index}")
+                else:
+                    self.frame_label.setText(f"現在フレーム: {frame_index}")
+            else:
+                self.frame_label.setText("Frame: -")
         else:
             self.frame_label.setText("Frame: -")
 
@@ -711,12 +852,18 @@ class PathViewWidget(QWidget):
             self.save_button.setEnabled(False)
 
         except Exception as e:
-            QMessageBox.critical(self, "エラー", f"保存処理の開始に失敗しました:\n{e}")
+            msg_box = create_styled_message_box(
+                self, QMessageBox.Icon.Critical, "エラー", f"保存処理の開始に失敗しました:\n{e}"
+            )
+            msg_box.exec()
 
     def save_hires_image(self):
         """高精細画像を並列処理で保存"""
         if self.render_one is None:
-            QMessageBox.warning(self, "警告", "保存する画像がありません")
+            msg_box = create_styled_message_box(
+                self, QMessageBox.Icon.Warning, "警告", "保存する画像がありません"
+            )
+            msg_box.exec()
             return
 
         # 既に保存処理中の場合は無視
@@ -746,14 +893,18 @@ class PathViewWidget(QWidget):
             self.save_button.setEnabled(False)
 
         except Exception as e:
-            QMessageBox.critical(
-                self, "エラー", f"高精細保存処理の開始に失敗しました:\n{e}"
+            msg_box = create_styled_message_box(
+                self, QMessageBox.Icon.Critical, "エラー", f"高精細保存処理の開始に失敗しました:\n{e}"
             )
+            msg_box.exec()
 
     def _on_save_finished(self, result, success):
         """通常保存完了時の処理"""
         if not success:
-            QMessageBox.critical(self, "エラー", f"画像の保存に失敗しました:\n{result}")
+            msg_box = create_styled_message_box(
+                self, QMessageBox.Icon.Critical, "エラー", f"画像の保存に失敗しました:\n{result}"
+            )
+            msg_box.exec()
             # エラー時は通常状態に戻す
             self.save_button.set_processing(False, "保存")
         else:
@@ -770,9 +921,10 @@ class PathViewWidget(QWidget):
     def _on_hires_finished(self, result, success):
         """高精細保存完了時の処理"""
         if not success:
-            QMessageBox.critical(
-                self, "エラー", f"高精細画像の保存に失敗しました:\n{result}"
+            msg_box = create_styled_message_box(
+                self, QMessageBox.Icon.Critical, "エラー", f"高精細画像の保存に失敗しました:\n{result}"
             )
+            msg_box.exec()
             # エラー時は通常状態に戻す
             self.save_hires_button.set_processing(False, "高精細保存")
             self.save_button.set_processing(False, "保存")

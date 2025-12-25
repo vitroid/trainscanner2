@@ -317,12 +317,12 @@ class Render_one:
                 json.dump(history_data, f, indent=2, ensure_ascii=False)
             self.logger.debug(f"Saved history to {history_path}")
         except Exception as e:
-            import sys
             import traceback
 
-            print(f"エラー: stitching履歴の保存に失敗しました: {e}")
+            self.logger.error(f"エラー: stitching履歴の保存に失敗しました: {e}")
             traceback.print_exc()
-            sys.exit(1)
+            # sys.exit(1)を削除し、例外を再発生させる
+            raise
 
         return image_path, history_path
 

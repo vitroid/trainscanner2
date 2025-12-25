@@ -152,7 +152,13 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         matchrect = match_rect(base_imagerect, next_imagerect)
 
         # video frame index, absolute location of the frame, matchscore
-        (vx, vy), max_val = matchrect.peak(subpixel=True)
+        peak_result = matchrect.peak(subpixel=True)
+        if peak_result is None:
+            logger.warning(f"matchrect.peak() returned None for frame {frame_index}, using default values")
+            vx, vy = 0, 0
+            max_val = 0.0
+        else:
+            (vx, vy), max_val = peak_result
         dx += vx
         dy += vy
         # print(dx, dy)
