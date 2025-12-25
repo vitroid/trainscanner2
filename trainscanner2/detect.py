@@ -239,13 +239,8 @@ class MotionDetector:
                 dropped_paths.add(path_label)
                 persist = final_path[tail_intxy]
                 my_last_xy = self.paths[persist].history[-1].xy
-                print(f"{self.paths[persist].history=}")
                 x = float(my_last_xy[0])
                 y = float(my_last_xy[1])
-                print(
-                    f"{my_last_xy=} {type(my_last_xy)=} {final_path[tail_intxy]=} {type(final_path[tail_intxy])=}"
-                )
-                print(f"{this_log.keys()=}")
                 if (x, y) in this_log:
                     this_log[x, y] += f"merged:{path_label};"
                 else:

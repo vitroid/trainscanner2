@@ -80,11 +80,15 @@ class Render_one:
         # PyQt6ウィンドウは閉じない（ユーザーが手動で閉じるボタンを押すまで残す）
         if self.window_manager and self.window:
             # ウィンドウのタイトルを「処理完了」に更新
-            self.window_manager.set_window_finished(self.id, self.quality)
+            self.window_manager.set_window_finished(self.id, self.score)
         else:
-            # OpenCVウィンドウのみ自動で閉じる
-            cv2.destroyWindow(f"{self.id}")
-            cv2.waitKey(1)
+            # OpenCVウィンドウのみ自動で閉じる（存在しない場合はエラーを無視）
+            try:
+                cv2.destroyWindow(f"{self.id}")
+                cv2.waitKey(1)
+            except cv2.error:
+                # ウィンドウが存在しない場合は無視
+                pass
 
     def _render_one(
         self,
@@ -152,7 +156,7 @@ class Render_one:
                 if img is not None:
                     cv2.putText(
                         img,
-                        f"Quality: {self.quality:.3f}",
+                        f"Score: {self.score:.3f}",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,
@@ -188,7 +192,7 @@ class Render_one:
                 self._render_one(f, pi)
 
     @property
-    def quality(self):
+    def score(self):
         # 最後の5フレームで判別する。
         return np.mean([h.value for h in self.pathitem_history[-20:]])
 
@@ -210,7 +214,7 @@ class Render_one:
                 - id: PathのID
                 - video_path: 元動画ファイルのパス（高解像度再スキャン用）
                 - train_position: 最終的なキャンバス上の位置
-                - quality: 平均品質スコア
+                - score: 平均品質スコア
                 - scaling_factor: 低解像度→高解像度への変換係数
                   （実際の変位 = delta * (1/scaling_factor)）
                 - history: フレームごとの詳細情報のリスト
@@ -257,7 +261,7 @@ class Render_one:
             "id": self.id,
             "video_path": self.video_path,
             "train_position": float(self.train_position),
-            "quality": float(self.quality),
+            "score": float(self.score),
             "scaling_factor": float(self.scaling_factor),
             "history": history_data,
         }
@@ -309,7 +313,6 @@ class Render_one:
         # stitching履歴を保存
         try:
             history_data = self.export_history()
-            print(history_data)
             with open(history_path, "w", encoding="utf-8") as f:
                 json.dump(history_data, f, indent=2, ensure_ascii=False)
             self.logger.debug(f"Saved history to {history_path}")
@@ -341,7 +344,7 @@ class Render:
     【Pathの削除タイミング】
     1. 品質が閾値以下になったとき (done())
     2. ユーザーがウィンドウを閉じたとき (remove_renderer())
-    3. 処理完了後に低品質Pathを一括削除 (close_low_quality_windows())
+    3. 処理完了後に低品質Pathを一括削除 (close_low_score_windows())
     """
 
     logger = getLogger(__name__)
@@ -356,7 +359,7 @@ class Render:
         use_multiview=False,  # マルチビューウィンドウを使用するか
     ):
         self.renderers = {}  # {id: Render_one} 全Path（active/finished両方）
-        self.max_quality = 0.0
+        self.max_score = 0.0
         self.window_manager = None
         self.multiview_manager = None
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
@@ -425,18 +428,18 @@ class Render:
             self.multiview_manager is not None
             and hasattr(r, "canvas")
             and r.canvas is not None
-            and r.quality > 0.3
+            and r.score > 0.3
         ):  # 品質閾値を0.3に戻す
             # 既に追加されているかチェック（より確実に）
             # もしpath_widgetsが存在しないなら、
             if not hasattr(self.multiview_manager.window, "path_widgets"):
                 self.logger.info(
-                    f"Adding path {id} to multiview manager (first time, quality: {r.quality:.3f})"
+                    f"Adding path {id} to multiview manager (first time, score: {r.score:.3f})"
                 )
                 self.multiview_manager.window.add_path(id, r)
             elif id not in self.multiview_manager.window.path_widgets:
                 self.logger.info(
-                    f"Adding path {id} to multiview manager (quality: {r.quality:.3f})"
+                    f"Adding path {id} to multiview manager (score: {r.score:.3f})"
                 )
                 self.multiview_manager.window.add_path(id, r)
             else:
@@ -456,24 +459,24 @@ class Render:
                 self.logger.debug("- canvas is not existent")
             if r.canvas is None:
                 self.logger.debug("- canvas is None")
-            if r.quality <= 0.3:
-                self.logger.debug(f"- {r.quality=} is less than 0.3")
+            if r.score <= 0.3:
+                self.logger.debug(f"- {r.score=} is less than 0.3")
                 self.logger.debug(f"{[h.value for h in r.pathitem_history[-20:]]}")
 
-        q = r.quality
+        q = r.score
         # 最高品質が更新されたら、低品質ウィンドウをチェックして閉じる
-        if self.max_quality < q:
-            self.max_quality = q
-            self.logger.debug(f"Max quality updated: {self.max_quality}")
+        if self.max_score < q:
+            self.max_score = q
+            self.logger.debug(f"Max score updated: {self.max_score}")
             # 閾値が上がったので、低品質ウィンドウを閉じる
             # thresholdとの比較とそれによるRemoval処理は一旦停止（ユーザー要求）
-            # self._check_and_close_low_quality_windows()
+            # self._check_and_close_low_score_windows()
             # multiview_managerからも低品質パネルを削除
             # 一旦表示したパネルは消さないようにする（ユーザー要求）
-            # self._remove_low_quality_from_multiview()
+            # self._remove_low_score_from_multiview()
 
         # 閾値を下げる。あるいはこれを使わないほうがいいかも
-        self.max_quality *= 0.995
+        self.max_score *= 0.995
 
     def mark_inactive(self, id: int):
         """
@@ -509,7 +512,7 @@ class Render:
             r.done()
 
             # マルチビューウィンドウからは削除しない（動画処理完了時も画像を表示し続けるため）
-            # 品質が低い場合は _remove_low_quality_from_multiview() で削除される
+            # 品質が低い場合は _remove_low_score_from_multiview() で削除される
 
             # Pathを削除（メモリ解放、以降の処理をスキップ）
             del self.renderers[id]
@@ -563,7 +566,7 @@ class Render:
                 - total: 総Path数
                 - active: 処理中のPath数
                 - finished: 処理完了Path数
-                - max_quality: 最高品質
+                - max_score: 最高品質
         """
         active = self.get_active_paths()
         finished = self.get_finished_paths()
@@ -571,10 +574,10 @@ class Render:
             "total": len(self.renderers),
             "active": len(active),
             "finished": len(finished),
-            "max_quality": self.max_quality,
+            "max_score": self.max_score,
         }
 
-    def _check_and_close_low_quality_windows(self, quality_ratio: float = 0.5):
+    def _check_and_close_low_score_windows(self, score_ratio: float = 0.5):
         """
         低品質ウィンドウをチェックして閉じる（処理中に随時実行）
 
@@ -583,24 +586,24 @@ class Render:
         - ウィンドウが無限に増え続けないようにする
 
         【呼ばれるタイミング】
-        - Render.put()でmax_qualityが更新されたとき
+        - Render.put()でmax_scoreが更新されたとき
 
         Args:
-            quality_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
+            score_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
         """
-        if not self.renderers or self.max_quality == 0:
+        if not self.renderers or self.max_score == 0:
             return
 
-        threshold = self.max_quality * quality_ratio
+        threshold = self.max_score * score_ratio
         self.logger.debug(
-            f"Threshold: {threshold=} {self.max_quality=} {quality_ratio=}"
+            f"Threshold: {threshold=} {self.max_score=} {score_ratio=}"
         )
         to_close = []
 
         # 閉じるウィンドウをリストアップ（辞書のコピーを作成してからイテレート）
         for id, renderer in list(self.renderers.items()):
-            # 品質が計算されていて（quality > 0）、かつ閾値以下
-            if renderer.quality > 0 and renderer.quality < threshold:
+            # 品質が計算されていて（score > 0）、かつ閾値以下
+            if renderer.score > 0 and renderer.score < threshold:
                 to_close.append(id)
 
         # ウィンドウを閉じてPathを削除
@@ -612,15 +615,19 @@ class Render:
             renderer = self.renderers[id]
             self.logger.info(
                 f"Removed renderer {id}: 品質が閾値以下 "
-                f"(quality={renderer.quality:.3f} < threshold={threshold:.3f}, max_quality={self.max_quality:.3f})"
+                f"(score={renderer.score:.3f} < threshold={threshold:.3f}, max_score={self.max_score:.3f})"
             )
             if self.window_manager:
                 # PyQt6の場合: close()を呼ぶとcloseEventが発火して自動的に削除される
                 self.window_manager.close_window(id)
                 # closeEventでremove_renderer()が呼ばれるので、ここでは削除しない
             else:
-                # OpenCVの場合: 手動でウィンドウを閉じて削除
-                cv2.destroyWindow(f"{id}")
+                # OpenCVの場合: 手動でウィンドウを閉じて削除（存在しない場合はエラーを無視）
+                try:
+                    cv2.destroyWindow(f"{id}")
+                except cv2.error:
+                    # ウィンドウが存在しない場合は無視
+                    pass
 
                 # Pathを削除
                 if id in self.renderers:
@@ -628,33 +635,33 @@ class Render:
 
         if to_close:
             self.logger.debug(
-                f"Closed {len(to_close)} low-quality windows during processing"
+                f"Closed {len(to_close)} low-score windows during processing"
             )
 
-    def _remove_low_quality_from_multiview(self, quality_ratio: float = 0.5):
+    def _remove_low_score_from_multiview(self, score_ratio: float = 0.5):
         """
         multiview_managerから低品質パネルを削除
 
         Args:
-            quality_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
+            score_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
         """
         if (
             not self.multiview_manager
             or not hasattr(self.multiview_manager, "window")
             or not self.multiview_manager.window
-            or self.max_quality == 0
+            or self.max_score == 0
         ):
             return
 
-        threshold = self.max_quality * quality_ratio
+        threshold = self.max_score * score_ratio
         to_remove = []
 
         # 削除するパネルをリストアップ
         for path_id, renderer in self.renderers.items():
             if (
                 path_id in self.multiview_manager.window.path_widgets
-                and renderer.quality > 0
-                and renderer.quality < threshold
+                and renderer.score > 0
+                and renderer.score < threshold
             ):
                 to_remove.append(path_id)
 
@@ -663,23 +670,23 @@ class Render:
             renderer = self.renderers[path_id]
             reason = (
                 f"品質が閾値以下 "
-                f"(quality={renderer.quality:.3f} < threshold={threshold:.3f}, max_quality={self.max_quality:.3f})"
+                f"(score={renderer.score:.3f} < threshold={threshold:.3f}, max_score={self.max_score:.3f})"
             )
             self.multiview_manager.remove_path(path_id, reason=reason)
 
-    def close_low_quality_windows(self, quality_ratio: float = 0.5):
+    def close_low_score_windows(self, score_ratio: float = 0.5):
         """
         処理完了後に品質が閾値以下のウィンドウを自動で閉じる（互換性のため）
 
         【注意】
         - このメソッドは処理完了後に明示的に呼ぶ用
-        - 実際には、処理中も随時_check_and_close_low_quality_windows()が呼ばれている
+        - 実際には、処理中も随時_check_and_close_low_score_windows()が呼ばれている
         - このメソッドは最終確認として呼ばれる
 
         Args:
-            quality_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
+            score_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
         """
-        self._check_and_close_low_quality_windows(quality_ratio)
+        self._check_and_close_low_score_windows(score_ratio)
 
     def close_all(self):
         """すべてのウィンドウを閉じる"""

@@ -63,7 +63,6 @@ class ImageStrips:
             if elim < 0:
                 return  # どういうケース???
             _, overlay = imagerect.split_vertically(elim)
-            print(elim, displacement, overlay.shape, alpha.shape, imagerect.width)
 
             new_buffer = ImageRect()
             new_buffer.put_imagerect(self.buffer)

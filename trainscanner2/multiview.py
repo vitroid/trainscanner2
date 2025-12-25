@@ -302,30 +302,30 @@ class PathViewWidget(QWidget):
         self.show_gaps = show_gaps
 
         # 3. 縦にstackしたパネル (幅=コンテナ幅いっぱい、高さ=画像の高さ)
-        # 赤い枠で囲まれたパネル
+        # 灰色の枠で囲まれたパネル（背景は赤）
         self.active_panel_style = """
             QWidget {
-                border: 3px solid #ff0000;
+                border: 1px solid #999999;
                 border-radius: 8px;
-                background-color: white;
+                background-color: #ffcccc;
                 margin: 5px;
                 padding: 5px;
             }
             QWidget:hover {
-                border: 3px solid #4CAF50;
-                background-color: #f8f8f8;
+                border: 1px solid #999999;
+                background-color: #ffaaaa;
             }
         """
         self.inactive_panel_style = """
             QWidget {
-                border: 3px dashed #999999;
+                border: 1px solid #999999;
                 border-radius: 8px;
                 background-color: #f7f7f7;
                 margin: 5px;
                 padding: 5px;
             }
             QWidget:hover {
-                border: 3px dashed #7f8c8d;
+                border: 1px solid #999999;
                 background-color: #f0f0f0;
             }
         """
@@ -339,6 +339,7 @@ class PathViewWidget(QWidget):
         # 4a. 左側の情報枠 (固定幅、狭くていい)
         info_widget = QWidget()
         info_widget.setFixedWidth(150)  # 固定幅150px
+        info_widget.setStyleSheet("background-color: white;")  # 常に白背景
         info_layout = QVBoxLayout(info_widget)
         info_layout.setContentsMargins(5, 5, 5, 5)
         info_layout.setSpacing(5)
@@ -347,24 +348,24 @@ class PathViewWidget(QWidget):
         self.base_title = f"Path {path_id}"
         self.title_label = QLabel(self.base_title)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_active_style = "font-weight: bold; font-size: 14px; color: #2c3e50; background-color: #ecf0f1; padding: 3px; border-radius: 3px;"
-        self.title_inactive_style = "font-weight: bold; font-size: 14px; color: #7f8c8d; background-color: #f0f0f0; padding: 3px; border-radius: 3px;"
+        self.title_active_style = "font-weight: bold; font-size: 14px; color: #2c3e50; padding: 3px; border: none;"
+        self.title_inactive_style = "font-weight: bold; font-size: 14px; color: #7f8c8d; padding: 3px; border: none;"
         self.title_label.setStyleSheet(self.title_active_style)
         info_layout.addWidget(self.title_label)
 
         # 品質表示
-        self.quality_label = QLabel("品質: 0.000")
-        self.quality_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.quality_label.setStyleSheet(
-            "font-size: 11px; color: #666; padding: 2px; background-color: #f8f9fa; border-radius: 2px;"
+        self.score_label = QLabel("Score: 0.000")
+        self.score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.score_label.setStyleSheet(
+            "font-size: 11px; color: #666; padding: 2px; border: none;"
         )
-        info_layout.addWidget(self.quality_label)
+        info_layout.addWidget(self.score_label)
 
         # 最初のframe番号表示
         self.frame_label = QLabel("Frame: -")
         self.frame_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.frame_label.setStyleSheet(
-            "font-size: 10px; color: #888; padding: 2px; background-color: #f0f0f0; border-radius: 2px;"
+            "font-size: 10px; color: #888; padding: 2px; border: none;"
         )
         info_layout.addWidget(self.frame_label)
 
@@ -420,6 +421,7 @@ class PathViewWidget(QWidget):
             QLabel {
                 color: #333;
                 font-family: Arial, sans-serif;
+                border: none;
             }
             QProgressBar {
                 border: 1px solid #ccc;
@@ -525,27 +527,27 @@ class PathViewWidget(QWidget):
                 self.image_widget.setText(f"更新エラー: {str(e)[:50]}")
 
         # 品質表示を更新
-        if hasattr(render_one, "quality"):
-            quality = render_one.quality
-            if quality > 0:
-                self.quality_label.setText(f"品質: {quality:.3f}")
+        if hasattr(render_one, "score"):
+            score = render_one.score
+            if score > 0:
+                self.score_label.setText(f"品質: {score:.3f}")
 
                 # 品質に応じて色を変更
-                if quality > 0.7:
-                    self.quality_label.setStyleSheet(
+                if score > 0.7:
+                    self.score_label.setStyleSheet(
                         "font-size: 12px; color: #4CAF50; font-weight: bold;"
                     )
-                elif quality > 0.4:
-                    self.quality_label.setStyleSheet(
+                elif score > 0.4:
+                    self.score_label.setStyleSheet(
                         "font-size: 12px; color: #FF9800; font-weight: bold;"
                     )
                 else:
-                    self.quality_label.setStyleSheet(
+                    self.score_label.setStyleSheet(
                         "font-size: 12px; color: #F44336; font-weight: bold;"
                     )
             else:
-                self.quality_label.setText("品質: 0.000")
-                self.quality_label.setStyleSheet("font-size: 12px; color: #666;")
+                self.score_label.setText("Score: 0.000")
+                self.score_label.setStyleSheet("font-size: 12px; color: #666;")
 
         # 横スクロールを右端に自動追従
         if self._horizontal_scrollbar is not None:
@@ -590,11 +592,11 @@ class PathViewWidget(QWidget):
             return False
 
         # 品質が設定されていない場合は作画未完了
-        if not hasattr(self.render_one, "quality") or self.render_one.quality is None:
+        if not hasattr(self.render_one, "score") or self.render_one.score is None:
             return False
 
         # 品質が0の場合は作画未完了
-        if self.render_one.quality <= 0:
+        if self.render_one.score <= 0:
             return False
 
         # 画像が存在する場合は作画完了とみなす
@@ -915,7 +917,7 @@ class MultiViewWindow(QMainWindow):
         self._add_to_vertical(path_widget, path_id)
 
         # 品質順で並べ替え
-        self._sort_panels_by_quality()
+        self._sort_panels_by_score()
 
         self.logger.info(f"Successfully added path {path_id} to MultiViewWindow")
         self.logger.info(f"Total paths in window: {len(self.path_widgets)}")
@@ -968,9 +970,9 @@ class MultiViewWindow(QMainWindow):
         path_widget = self.path_widgets[path_id]
 
         # 削除前に品質情報を取得
-        quality = None
-        if path_id in self.renderers and hasattr(self.renderers[path_id], "quality"):
-            quality = self.renderers[path_id].quality
+        score = None
+        if path_id in self.renderers and hasattr(self.renderers[path_id], "score"):
+            score = self.renderers[path_id].score
 
         # 3. 縦にstackしたパネルから削除
         self.panels_layout.removeWidget(path_widget)
@@ -985,12 +987,12 @@ class MultiViewWindow(QMainWindow):
         self._adjust_panels_container_size()
 
         # 完成した画像を削除する場合はログに残す
-        quality_info = f" (quality: {quality:.3f})" if quality is not None else ""
+        score_info = f" (score: {score:.3f})" if score is not None else ""
         self.logger.info(
-            f"Removed path {path_id} from MultiViewWindow: {reason}{quality_info}"
+            f"Removed path {path_id} from MultiViewWindow: {reason}{score_info}"
         )
 
-    def _sort_panels_by_quality(self):
+    def _sort_panels_by_score(self):
         """パネルを品質が高い順に並べ替える"""
         if not self.path_widgets:
             return
@@ -999,8 +1001,8 @@ class MultiViewWindow(QMainWindow):
         sorted_widgets = sorted(
             self.path_widgets.values(),
             key=lambda widget: (
-                widget.render_one.quality
-                if widget.render_one and hasattr(widget.render_one, "quality")
+                widget.render_one.score
+                if widget.render_one and hasattr(widget.render_one, "score")
                 else 0.0
             ),
             reverse=True,
@@ -1058,7 +1060,7 @@ class MultiViewWindow(QMainWindow):
 
         # 更新があった場合のみ品質順で並べ替え
         if updated_count > 0:
-            self._sort_panels_by_quality()
+            self._sort_panels_by_score()
 
     def has_paths(self) -> bool:
         """Pathが存在するかチェック"""

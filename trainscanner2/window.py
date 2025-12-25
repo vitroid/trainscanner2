@@ -290,16 +290,16 @@ class ImageWindow(QMainWindow):
         elif self.pending_image is not None:
             self._update_image_legacy(self.pending_image, force=True)
 
-    def set_finished(self, quality: float):
+    def set_finished(self, score: float):
         """処理が完了したことを表示する"""
         if self.video_base and self.video_base != "train_scan":
             video_basename = os.path.basename(self.video_base)
             self.setWindowTitle(
-                f"Train Scanner - {video_basename} (ID: {self.window_id}) [処理完了 - Quality: {quality:.3f}]"
+                f"Train Scanner - {video_basename} (ID: {self.window_id}) [処理完了 - Score: {score:.3f}]"
             )
         else:
             self.setWindowTitle(
-                f"Train Scanner - ID: {self.window_id} [処理完了 - Quality: {quality:.3f}]"
+                f"Train Scanner - ID: {self.window_id} [処理完了 - Score: {score:.3f}]"
             )
 
     def save_image(self):
@@ -317,7 +317,7 @@ class ImageWindow(QMainWindow):
           "id": 28,
           "video_path": "/path/to/video.mp4",
           "train_position": 1234.5,
-          "quality": 0.856,
+          "score": 0.856,
           "scaling_factor": 0.5,
           "history": [
             {
@@ -658,12 +658,12 @@ class WindowManager:
         if window_id in self.windows:
             self.windows[window_id].update_image(cv_img)
 
-    def set_window_finished(self, window_id: int, quality: float):
+    def set_window_finished(self, window_id: int, score: float):
         """ウィンドウに処理完了を表示"""
         if window_id in self.windows:
             # 処理完了時は保留中の画像を強制更新
             self.windows[window_id].flush_pending()
-            self.windows[window_id].set_finished(quality)
+            self.windows[window_id].set_finished(score)
 
     def close_window(self, window_id: int):
         """ウィンドウを閉じる（プログラムから）"""

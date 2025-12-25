@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import numpy as np
 from logging import getLogger, INFO, DEBUG, basicConfig
 from tqdm import tqdm
@@ -17,7 +18,7 @@ from trainscanner2.render import Render
 # ただ、あまりに小さいと変位が見えなくなる。
 # 完全解像度の時は、縮小画像で推定したpathのそばだけ見ればいいので爆速。しかも、その時にスリットの設定などを行えばなおいい。
 
-# quality至上主義にすると、同じ動画のなかに異なる品質のものがあった時に見逃す可能性がある。
+# score至上主義にすると、同じ動画のなかに異なる品質のものがあった時に見逃す可能性がある。
 # 時刻時刻での最良品質に対して比較するのが良い。
 # あと、カメラのてぶれの許容範囲はもうちょっと大きくてもいいだろう。
 # 00205.MTSからどれだけ成功を抽出できるかを評価基準にする。→205の場合は極端にカメラが動くので、antishakeを切ったほうがまし。参考にならない。
@@ -97,20 +98,109 @@ def main():
 
         # time.sleep(0.1)
 
+    # detect.pyの処理が終わったところで、すべてのpathを保存するため
+    # motiondetector.pathsをコピー（done()で削除される前に保存）
+    all_detected_paths = dict(motiondetector.paths)
+
     # 残りのパスを完了として処理
     ## これ要るのか?
     for path_id, history in motiondetector.done():
         if path_id in renderer.renderers:
-            quality = renderer.renderers[path_id].quality
+            score = renderer.renderers[path_id].score
             logger.info(
-                f"Removed renderer {path_id}: 動画処理完了 (quality: {quality:.3f})"
+                f"Removed renderer {path_id}: 動画処理完了 (score: {score:.3f})"
             )
         renderer.done(id=path_id)
 
     # 処理完了後、低品質ウィンドウを最終確認（処理中も随時閉じられている）
     # thresholdとの比較とそれによるRemoval処理は一旦停止（ユーザー要求）
-    # logger.info("Processing complete. Final check for low-quality windows...")
-    # renderer.close_low_quality_windows(quality_ratio=0.5)
+    # logger.info("Processing complete. Final check for low-score windows...")
+    # renderer.close_low_score_windows(score_ratio=0.5)
+
+    # detect.pyの処理が終わったところで、すべてのpathをJSON形式で保存
+    # （renderingに至らなかったpathも含む）
+    logger.info(
+        "Saving all paths data (including paths that didn't reach rendering)..."
+    )
+    try:
+        all_paths_data = {}
+
+        # まず、renderingされたpathのデータを取得
+        for path_id, render_one in renderer.renderers.items():
+            if render_one is not None:
+                try:
+                    path_data = render_one.export_history()
+                    all_paths_data[str(path_id)] = path_data
+                    logger.info(f"Exported rendered path {path_id} data")
+                except Exception as e:
+                    logger.warning(f"Failed to export rendered path {path_id}: {e}")
+
+        # 次に、detect.pyで検出されたがrenderingに至らなかったpathのデータを取得
+        for path_id, path in all_detected_paths.items():
+            path_id_str = str(path_id)
+            # 既にrenderingされたpathのデータがある場合はスキップ
+            if path_id_str in all_paths_data:
+                continue
+
+            try:
+                # detect.pyのPathからtspos2形式のデータを生成
+                history_data = []
+                train_position = 0.0
+
+                for h in path.history:
+                    delta_x, delta_y = h.xy
+                    train_position += delta_x  # 累積位置を計算
+
+                    history_data.append(
+                        {
+                            "frame_index": int(h.frame_index),
+                            "match_score": float(h.value),
+                            "delta_x": float(delta_x),
+                            "delta_y": float(delta_y),
+                            "train_position": float(train_position),
+                            "abs_pos_x": 0.0,  # レンダリングされていないので不明
+                            "abs_pos_y": 0.0,  # レンダリングされていないので不明
+                        }
+                    )
+
+                # 品質スコアを計算（平均値）
+                score = (
+                    float(np.mean([h.value for h in path.history]))
+                    if path.history
+                    else 0.0
+                )
+
+                path_data = {
+                    "id": path_id,
+                    "video_path": videofile,
+                    "train_position": float(train_position),
+                    "score": score,
+                    "scaling_factor": float(scale),
+                    "history": history_data,
+                }
+
+                all_paths_data[path_id_str] = path_data
+                logger.info(
+                    f"Exported non-rendered path {path_id} data ({len(path.history)} frames)"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to export non-rendered path {path_id}: {e}")
+
+        if all_paths_data:
+            # ファイル名は動画ファイルのパス名の後ろに.tsdumpをつけたもの
+            dump_file = os.path.splitext(videofile)[0] + ".tsdump"
+            with open(dump_file, "w", encoding="utf-8") as f:
+                json.dump(all_paths_data, f, indent=2, ensure_ascii=False)
+            logger.info(
+                f"Saved all paths data to {dump_file} ({len(all_paths_data)} paths)"
+            )
+        else:
+            logger.warning("No path data to save")
+    except Exception as e:
+        logger.error(f"Failed to save paths data: {e}")
+        import traceback
+
+        traceback.print_exc()
 
     # PyQt6ウィンドウが全て閉じられるまで待機
     logger.info("Close remaining windows to exit.")

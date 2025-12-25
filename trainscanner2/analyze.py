@@ -61,8 +61,6 @@ class BlurMask2:
 
         # decay
         decayed = self.mask * (1 - 1 / self.lifetime)
-        # print(f"{diff.shape=}, {decayed.shape=}")
-        # pull up
         self.mask = cv2.max(diff, decayed)
 
         cv2.imshow("diff", diff)
@@ -97,8 +95,6 @@ class BlurMask3:
 
         # decay
         decayed = self.mask * 0.9
-        # print(f"{diff.shape=}, {decayed.shape=}")
-        # pull up
         self.mask = cv2.max(diff, decayed)
 
         cv2.imshow("diff", diff)

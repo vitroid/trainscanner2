@@ -4,7 +4,13 @@ import sys
 
 
 def standardize(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # 既にグレースケールの場合は変換をスキップ
+    if len(frame.shape) == 2:
+        gray = frame
+    elif len(frame.shape) == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    else:
+        raise ValueError(f"Invalid image shape: {frame.shape}")
     return ((gray - np.mean(gray)) / np.std(gray)).astype(np.float32)
 
 
@@ -47,10 +53,8 @@ class AntiShaker2:
         template = np.multiply(frame_std.astype(np.float32), mask.astype(np.float32))
         # antishakeでは、整数未満の変位は無視する。精密照合はdetectにまかせる。
         scores = cv2.matchTemplate(frame0_extend, template, cv2.TM_CCORR_NORMED)
-        # print(scores)
         _, _, _, max_loc = cv2.minMaxLoc(scores)
         dx, dy = (max_loc[0] - self._velocity, max_loc[1] - self._velocity)
-        # print(f"{dx=} {dy=}")
         self._absx += dx
         self._absy += dy
         diff_img = self._last_frame.copy()

@@ -9,6 +9,7 @@ from logging import getLogger, DEBUG, INFO, basicConfig
 import json
 import os
 from tqdm import tqdm
+import time
 
 from pyperbox import Rect
 from trainscanner.image import match_rect, diffImage, ImageRect
@@ -183,10 +184,10 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
             dumped = np.array((dx, dy))
         else:
             dumped = dumped * (1 - damping) + np.array((dx, dy)) * damping
-            if show_progress:
-                print(
-                    f"Frame {frame_index}: raw=({dx:.2f}, {dy:.2f}), smoothed=({dumped[0]:.2f}, {dumped[1]:.2f})"
-                )
+            # if show_progress:
+            #     print(
+            #         f"Frame {frame_index}: raw=({dx:.2f}, {dy:.2f}), smoothed=({dumped[0]:.2f}, {dumped[1]:.2f})"
+            #     )
             dx, dy = dumped
 
         logger.debug(f"frame_index={frame_index}")
@@ -233,8 +234,8 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
     videofile = os.path.basename(videofile)
     tspos2path = os.path.dirname(tspos2file)
     videofile = os.path.join(tspos2path, videofile)
-    if verbose:
-        print(f"Video file: {videofile}")
+    # if verbose:
+    #     print(f"Video file: {videofile}")
     vl = video_loader_factory(videofile)
 
     scaling_factor = tspos2["scaling_factor"]
@@ -258,18 +259,22 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
     )
 
     # 処理開始のメッセージ
-    if verbose:
-        print(f"Starting high-resolution stitching...")
-        print(f"Total frames to process: {len(tspos2['history'])}")
+    # if verbose:
+    #     print(f"Starting high-resolution stitching...")
+    #     print(f"Total frames to process: {len(tspos2['history'])}")
 
-    for frame_index, delta, absolute_position, max_val, unblurred_frame in analyze_iter(
+    # last_time = time.time()
+    for frame_index, delta, absolute_position, max_val, unblurred_frame in tqdm(analyze_iter(
         vl, tspos2=tspos2, show_progress=verbose, progress_callback=progress_callback
-    ):
+    ), total=len(tspos2["history"])):
         render.put(
             unblurred_frame,
             PathItem(frame_index=frame_index, xy=delta, value=max_val),
             absolute_position=absolute_position,
         )
+        # now = time.time()
+        # print(f"Frame {frame_index} processed in {now - last_time:.2f} seconds")
+        # last_time = now
 
     return render
 
