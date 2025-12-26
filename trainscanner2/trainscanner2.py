@@ -155,7 +155,8 @@ def download_from_url(url: str, progress_callback=None) -> tuple[str, str]:
     outtmpl = os.path.join(temp_dir, "ts2_download_%(id)s.%(ext)s")
 
     ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        # 音声は不要なので、ビデオのみの最高画質を指定
+        "format": "bestvideo/best",
         "outtmpl": outtmpl,
         "quiet": True,
         "no_warnings": True,
@@ -171,9 +172,9 @@ def download_from_url(url: str, progress_callback=None) -> tuple[str, str]:
         # info['ext'] が実際と異なる場合があるため（マージ後など）、
         # 実際にファイルが存在するか、あるいはマージ後の名前を確認する
         if not os.path.exists(downloaded_file):
-            # webmなどがmp4にマージされた場合、拡張子がmp4に変わっている可能性がある
+            # マージなどで拡張子が変更された可能性を考慮して再検索
             base, _ = os.path.splitext(downloaded_file)
-            for ext in [".mp4", ".mkv", ".webm"]:
+            for ext in [".mkv", ".mp4", ".webm"]:
                 if os.path.exists(base + ext):
                     downloaded_file = base + ext
                     break
@@ -330,6 +331,7 @@ def main():
     elif "-v" in sys.argv or "--verbose" in sys.argv:
         basicConfig(level=INFO)
     else:
+        # デフォルトではWARNINGに設定して、並列スレッド内からのGUI操作(imshow等)によるクラッシュを防ぐ
         basicConfig(level=WARNING)
 
     if not PYQT6_AVAILABLE:

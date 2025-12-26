@@ -924,6 +924,14 @@ class PathViewWidget(QWidget):
 
     def _on_save_finished(self, result, success):
         """通常保存完了時の処理"""
+        # シグナルを切断して、重複実行や破棄後のアクセスを防ぐ
+        if self.save_worker:
+            try:
+                self.save_worker.finished.disconnect(self._on_save_finished)
+                self.save_worker.progress.disconnect(self._on_save_progress)
+            except Exception:
+                pass
+
         if not success:
             msg_box = create_styled_message_box(
                 self,
@@ -947,6 +955,15 @@ class PathViewWidget(QWidget):
 
     def _on_hires_finished(self, result, success):
         """高精細保存完了時の処理"""
+        # シグナルを切断
+        if self.hires_worker:
+            try:
+                self.hires_worker.finished.disconnect(self._on_hires_finished)
+                self.hires_worker.progress.disconnect(self._on_hires_progress)
+                self.hires_worker.status_update.disconnect(self._on_hires_status_update)
+            except Exception:
+                pass
+
         if not success:
             msg_box = create_styled_message_box(
                 self,
@@ -1329,13 +1346,11 @@ class MultiViewWindow(QMainWindow):
         # タイマーを一時停止
         self.update_timer.stop()
 
-        # すべてのウィジェットを削除
+        # すべてのウィジェットを安全に削除（スレッド待機を含む）
         for path_id in list(self.path_widgets.keys()):
-            widget = self.path_widgets.pop(path_id)
-            self.panels_layout.removeWidget(widget)
-            widget.deleteLater()
+            self.remove_path(path_id, reason="一括クリア")
 
-        # データのクリア
+        # データのクリア（念のため）
         self.renderers.clear()
         self.active_path_ids.clear()
 
