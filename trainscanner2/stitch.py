@@ -235,13 +235,27 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
 
     with open(tspos2file, "r") as f:
         tspos2 = json.load(f)
-    videofile = tspos2["video_path"]
-    # videofileのファイル名だけを採用し、パスはtspos2fileのものを利用する(tspos2とmovが同じパスになることを仮定)
-    videofile = os.path.basename(videofile)
-    tspos2path = os.path.dirname(tspos2file)
-    videofile = os.path.join(tspos2path, videofile)
-    # if verbose:
-    #     print(f"Video file: {videofile}")
+    
+    # 動画ファイルのパスを決定するロジック
+    original_videofile = tspos2["video_path"]
+    
+    if os.path.exists(original_videofile):
+        # 1. まず、記録されているそのままのパス（絶対パス）を試す
+        videofile = original_videofile
+    else:
+        # 2. 見つからない場合は、.tspos2ファイルと同じディレクトリを探す
+        # (ファイルを移動した場合のフォールバック)
+        basename = os.path.basename(original_videofile)
+        tspos2path = os.path.dirname(tspos2file)
+        videofile = os.path.join(tspos2path, basename)
+        
+        if not os.path.exists(videofile):
+            # 3. それでも見つからない場合はエラー
+            raise FileNotFoundError(
+                f"動画ファイルが見つかりません。\n記録されたパス: {original_videofile}\n"
+                f"または現在のディレクトリ: {videofile}"
+            )
+
     vl = video_loader_factory(videofile)
 
     scaling_factor = tspos2["scaling_factor"]

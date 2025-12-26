@@ -57,7 +57,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
         multiview_manager.clear_all_paths()
         multiview_manager.set_video_base(video_base)
         renderer = Render(
-            video_path=videofile,
+            video_path=os.path.abspath(videofile),  # 確実に絶対パスで記録
             video_base=video_base,
             scaling_factor=scale,
             use_pyqt=False,
@@ -67,7 +67,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
         renderer.window_manager = None
     else:
         renderer = Render(
-            video_path=videofile,
+            video_path=os.path.abspath(videofile),  # 確実に絶対パスで記録
             video_base=video_base,
             scaling_factor=scale,
             use_multiview=True,
