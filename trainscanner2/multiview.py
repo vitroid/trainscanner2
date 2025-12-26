@@ -55,14 +55,18 @@ def cv2_to_qpixmap(cv_img):
             rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
             q_img = QImage(
                 rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
-            ).copy() # ここでコピーを取るのがクラッシュ防止に重要
+            ).copy()  # ここでコピーを取るのがクラッシュ防止に重要
             return QPixmap.fromImage(q_img)
         else:
             # グレースケール画像の場合
             height, width = cv_img.shape
             bytes_per_line = width
             q_img = QImage(
-                cv_img.data, width, height, bytes_per_line, QImage.Format.Format_Grayscale8
+                cv_img.data,
+                width,
+                height,
+                bytes_per_line,
+                QImage.Format.Format_Grayscale8,
             ).copy()
             return QPixmap.fromImage(q_img)
     except Exception:
@@ -72,7 +76,7 @@ def cv2_to_qpixmap(cv_img):
 def create_styled_message_box(parent, icon, title, text):
     """
     スタイルが適用されたQMessageBoxを作成する
-    
+
     アクティブパネルのスタイルがダイアログに影響しないように、
     明示的にスタイルを設定する。
     """
@@ -80,9 +84,10 @@ def create_styled_message_box(parent, icon, title, text):
     msg_box.setIcon(icon)
     msg_box.setWindowTitle(title)
     msg_box.setText(text)
-    
+
     # ダイアログのスタイルを設定（白背景、青ボタン）
-    msg_box.setStyleSheet("""
+    msg_box.setStyleSheet(
+        """
         QMessageBox {
             background-color: #ffffff;
         }
@@ -108,8 +113,9 @@ def create_styled_message_box(parent, icon, title, text):
         QMessageBox QLabel {
             color: #333333;
         }
-    """)
-    
+    """
+    )
+
     return msg_box
 
 
@@ -426,29 +432,6 @@ class HiresWorker(QThread):
             self.finished.emit(str(e), False)
 
 
-def cv2_to_qpixmap(cv_img):
-    """OpenCV画像をQPixmapに変換"""
-    if cv_img is None:
-        return None
-
-    # カラー画像の場合
-    if len(cv_img.shape) == 3:
-        height, width, channel = cv_img.shape
-        bytes_per_line = 3 * width
-        q_image = QImage(
-            cv_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
-        ).rgbSwapped()
-    else:
-        # グレースケール画像の場合
-        height, width = cv_img.shape
-        bytes_per_line = width
-        q_image = QImage(
-            cv_img.data, width, height, bytes_per_line, QImage.Format.Format_Grayscale8
-        )
-
-    return QPixmap.fromImage(q_image)
-
-
 class PathViewWidget(QWidget):
     """
     1つのPathを表示するウィジェット
@@ -532,12 +515,16 @@ class PathViewWidget(QWidget):
 
         # ボタン
         self.save_button = ProgressButton("保存")
-        self.save_button.setObjectName("saveButton")  # objectNameを設定してスタイルを確実に適用
+        self.save_button.setObjectName(
+            "saveButton"
+        )  # objectNameを設定してスタイルを確実に適用
         self.save_button.clicked.connect(self.save_image)
         info_layout.addWidget(self.save_button)
 
         self.save_hires_button = ProgressButton("高精細保存")
-        self.save_hires_button.setObjectName("saveHiresButton")  # objectNameを設定してスタイルを確実に適用
+        self.save_hires_button.setObjectName(
+            "saveHiresButton"
+        )  # objectNameを設定してスタイルを確実に適用
         self.save_hires_button.clicked.connect(self.save_hires_image)
         info_layout.addWidget(self.save_hires_button)
 
@@ -869,7 +856,9 @@ class PathViewWidget(QWidget):
                 base_path = f"train_scan_{self.path_id}"
 
             # 保存ワーカーを作成・開始
-            self.save_worker = SaveWorker(self.render_one, base_path, is_hires=False, parent=self)
+            self.save_worker = SaveWorker(
+                self.render_one, base_path, is_hires=False, parent=self
+            )
             self.save_worker.finished.connect(self._on_save_finished)
             self.save_worker.progress.connect(self._on_save_progress)
             self.save_worker.start()
@@ -880,7 +869,10 @@ class PathViewWidget(QWidget):
 
         except Exception as e:
             msg_box = create_styled_message_box(
-                self, QMessageBox.Icon.Critical, "エラー", f"保存処理の開始に失敗しました:\n{e}"
+                self,
+                QMessageBox.Icon.Critical,
+                "エラー",
+                f"保存処理の開始に失敗しました:\n{e}",
             )
             msg_box.exec()
 
@@ -905,7 +897,9 @@ class PathViewWidget(QWidget):
                 base_path = f"train_scan_{self.path_id}"
 
             # 高精細ワーカーを作成・開始
-            self.hires_worker = HiresWorker(self.render_one, base_path, self.path_id, parent=self)
+            self.hires_worker = HiresWorker(
+                self.render_one, base_path, self.path_id, parent=self
+            )
             self.hires_worker.finished.connect(self._on_hires_finished)
             self.hires_worker.progress.connect(self._on_hires_progress)
             self.hires_worker.status_update.connect(self._on_hires_status_update)
@@ -921,7 +915,10 @@ class PathViewWidget(QWidget):
 
         except Exception as e:
             msg_box = create_styled_message_box(
-                self, QMessageBox.Icon.Critical, "エラー", f"高精細保存処理の開始に失敗しました:\n{e}"
+                self,
+                QMessageBox.Icon.Critical,
+                "エラー",
+                f"高精細保存処理の開始に失敗しました:\n{e}",
             )
             msg_box.exec()
 
@@ -929,7 +926,10 @@ class PathViewWidget(QWidget):
         """通常保存完了時の処理"""
         if not success:
             msg_box = create_styled_message_box(
-                self, QMessageBox.Icon.Critical, "エラー", f"画像の保存に失敗しました:\n{result}"
+                self,
+                QMessageBox.Icon.Critical,
+                "エラー",
+                f"画像の保存に失敗しました:\n{result}",
             )
             msg_box.exec()
             # エラー時は通常状態に戻す
@@ -949,7 +949,10 @@ class PathViewWidget(QWidget):
         """高精細保存完了時の処理"""
         if not success:
             msg_box = create_styled_message_box(
-                self, QMessageBox.Icon.Critical, "エラー", f"高精細画像の保存に失敗しました:\n{result}"
+                self,
+                QMessageBox.Icon.Critical,
+                "エラー",
+                f"高精細画像の保存に失敗しました:\n{result}",
             )
             msg_box.exec()
             # エラー時は通常状態に戻す
@@ -1168,9 +1171,17 @@ class MultiViewWindow(QMainWindow):
         path_widget = self.path_widgets[path_id]
 
         # 削除前に実行中のスレッドがあれば停止を待つ（クラッシュ防止）
-        if hasattr(path_widget, "save_worker") and path_widget.save_worker and path_widget.save_worker.isRunning():
+        if (
+            hasattr(path_widget, "save_worker")
+            and path_widget.save_worker
+            and path_widget.save_worker.isRunning()
+        ):
             path_widget.save_worker.wait()
-        if hasattr(path_widget, "hires_worker") and path_widget.hires_worker and path_widget.hires_worker.isRunning():
+        if (
+            hasattr(path_widget, "hires_worker")
+            and path_widget.hires_worker
+            and path_widget.hires_worker.isRunning()
+        ):
             path_widget.hires_worker.wait()
 
         # 削除前に品質情報を取得
@@ -1314,29 +1325,53 @@ class MultiViewWindow(QMainWindow):
     def clear_all_paths(self):
         """すべてのPath（パネル）を削除して初期状態に戻す"""
         self.logger.info("Clearing all paths from MultiViewWindow")
-        
+
         # タイマーを一時停止
         self.update_timer.stop()
-        
+
         # すべてのウィジェットを削除
         for path_id in list(self.path_widgets.keys()):
             widget = self.path_widgets.pop(path_id)
             self.panels_layout.removeWidget(widget)
             widget.deleteLater()
-            
+
         # データのクリア
         self.renderers.clear()
         self.active_path_ids.clear()
-        
+
         # ウィンドウタイトルをリセット
         self.setWindowTitle("Train Scanner - Multi View")
-        
+
         # タイマーを再開
         self.update_timer.start(1000)
 
     def closeEvent(self, event):
         """ウィンドウが閉じられるとき"""
         self.update_timer.stop()
+
+        # 実行中のすべての保存ワーカーの終了を待つ（クラッシュ防止）
+        active_workers = []
+        for widget in self.path_widgets.values():
+            if (
+                hasattr(widget, "save_worker")
+                and widget.save_worker
+                and widget.save_worker.isRunning()
+            ):
+                active_workers.append(widget.save_worker)
+            if (
+                hasattr(widget, "hires_worker")
+                and widget.hires_worker
+                and widget.hires_worker.isRunning()
+            ):
+                active_workers.append(widget.hires_worker)
+
+        if active_workers:
+            self.logger.info(
+                f"Waiting for {len(active_workers)} background workers to finish..."
+            )
+            for worker in active_workers:
+                worker.wait()  # 終了までブロック
+
         event.accept()
 
 
