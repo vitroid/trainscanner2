@@ -57,6 +57,7 @@ class Render_one:
         window_manager=None,
         scaling_factor: float = 1.0,
         video_path: str = None,
+        video_base: str = None,
         cache: bool = False,
     ):
         self.num_leading_frames = num_leading_frames
@@ -74,6 +75,7 @@ class Render_one:
         self.window = None
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
         self.video_path = video_path  # 動画ファイルパス（高解像度再スキャン用）
+        self.video_base = video_base  # 保存時のベース名
 
     def done(self):
         self.alive = False
@@ -280,11 +282,13 @@ class Render_one:
 
         Args:
             base_path: ファイルのベースパス（拡張子なし）
-                      Noneの場合、video_path + "_" + id を使用
+                      Noneの場合、video_base または video_path + "_" + id を使用
         """
         # ベースパスを決定
         if base_path is None:
-            if self.video_path:
+            if self.video_base:
+                base_path = f"{self.video_base}_{self.id}"
+            elif self.video_path:
                 video_base = os.path.splitext(self.video_path)[0]
                 base_path = f"{video_base}_{self.id}"
             else:
@@ -357,6 +361,7 @@ class Render:
         show_gaps=False,
         show_buttons=True,  # ウィンドウに保存・閉じるボタンを表示するか
         use_multiview=False,  # マルチビューウィンドウを使用するか
+        video_base: str = None,
     ):
         self.renderers = {}  # {id: Render_one} 全Path（active/finished両方）
         self.max_score = 0.0
@@ -364,26 +369,27 @@ class Render:
         self.multiview_manager = None
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
         self.video_path = video_path  # 動画ファイルパス
+        self.video_base = video_base # 保存時のベース名
 
         if use_pyqt:
             # 動画ファイルパスからベース名を取得
-            video_base = None
-            if video_path:
+            vb = video_base
+            if vb is None and video_path:
                 # 拡張子を除いたベース名を取得
-                video_base = os.path.splitext(video_path)[0]
+                vb = os.path.splitext(video_path)[0]
 
             try:
                 if use_multiview and MULTIVIEW_AVAILABLE:
                     # マルチビューウィンドウを使用
                     self.multiview_manager = MultiViewManager(
-                        video_base=video_base,
+                        video_base=vb,
                         show_gaps=show_gaps,
                         show_buttons=show_buttons,
                     )
                 else:
                     # 従来の個別ウィンドウを使用
                     self.window_manager = WindowManager(
-                        video_base=video_base,
+                        video_base=vb,
                         renderer_callback=self.remove_renderer,
                         show_gaps=show_gaps,  # デバッグ用
                         show_buttons=show_buttons,  # ボタン表示設定
@@ -411,6 +417,7 @@ class Render:
                 window_manager=self.window_manager,
                 scaling_factor=self.scaling_factor,
                 video_path=self.video_path,
+                video_base=self.video_base,
             )
             self.renderers[id] = r
 

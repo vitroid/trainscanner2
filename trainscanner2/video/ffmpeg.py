@@ -27,17 +27,20 @@ def run(
     cmd = [
         "ffmpeg",
         "-y",
-        f"-framerate {fps}",
-        f'-i "{input_filename}"',
-        f"-c:v {encoder}",
-        "-pix_fmt yuv420p",
-        f"-crf {crf}" if crf else "",
-        f'"{output_filename}"',
-        "-progress",
-        "pipe:1",  # 進捗情報を標準出力に出力
+        "-framerate", str(fps),
+        "-i", input_filename,
+        "-c:v", encoder,
+        "-pix_fmt", "yuv420p",
     ]
-    cmd = " ".join(cmd)
-    print(cmd)
+    if crf:
+        cmd.extend(["-crf", str(crf)])
+    
+    cmd.extend([
+        output_filename,
+        "-progress", "pipe:1"
+    ])
+    
+    print(f"Executing: {' '.join(cmd)}")
 
     # 進捗パターンをコンパイル
     frame_pattern = re.compile(r"frame=(\d+)")
@@ -47,10 +50,10 @@ def run(
     time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
     bitrate_pattern = re.compile(r"bitrate=\s*(\d+\.?\d*)kbits/s")
 
-    # プロセスを開始
+    # プロセスを開始（shell=Falseでリストを渡すのが最も安全）
     process = subprocess.Popen(
         cmd,
-        shell=True,
+        shell=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         universal_newlines=True,

@@ -1,12 +1,12 @@
 [project]
 name = "trainscanner2"
-version = "2.0b0"
+version = "2.0b1"
 description = "TrainScanner2: A tool for scanning and analyzing train videos."
 authors = [
     {name = "vitroid", email = "vitroid@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -18,7 +18,7 @@ packages = [{include = "trainscanner2"}]
 include = ["ts2undump.py"]
 
 [tool.poetry.dependencies]
-python = ">=3.11"
+python = ">=3.11,<3.14"
 tiffeditor = ">=0.4.0"
 pyperbox = ">=0.1.1"
 pykalman = ">=0.10.2"
@@ -29,6 +29,7 @@ pyqt6 = ">=6.0.0"
 tqdm = "^4.67.1"
 opencv-python = "^4.8.0"
 # Local dependencies - these must be on PyPI for a successful PyPI release
+yt-dlp = "^2025.12.8"
 
 [tool.poetry.scripts]
 trainscanner2 = "trainscanner2.trainscanner2:main"

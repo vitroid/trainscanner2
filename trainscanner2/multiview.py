@@ -47,14 +47,24 @@ def cv2_to_qpixmap(cv_img):
     if cv_img is None:
         return None
     try:
-        height, width, channel = cv_img.shape
-        bytes_per_line = 3 * width
-        # BGRからRGBに変換
-        rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-        q_img = QImage(
-            rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
-        )
-        return QPixmap.fromImage(q_img)
+        # カラー画像の場合
+        if len(cv_img.shape) == 3:
+            height, width, channel = cv_img.shape
+            bytes_per_line = 3 * width
+            # BGRからRGBに変換し、確実にコピーを作成する
+            rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+            q_img = QImage(
+                rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
+            ).copy() # ここでコピーを取るのがクラッシュ防止に重要
+            return QPixmap.fromImage(q_img)
+        else:
+            # グレースケール画像の場合
+            height, width = cv_img.shape
+            bytes_per_line = width
+            q_img = QImage(
+                cv_img.data, width, height, bytes_per_line, QImage.Format.Format_Grayscale8
+            ).copy()
+            return QPixmap.fromImage(q_img)
     except Exception:
         return None
 
@@ -296,8 +306,8 @@ class SaveWorker(QThread):
     finished = pyqtSignal(str, bool)  # ファイルパス, 成功フラグ
     progress = pyqtSignal(int)  # 進捗（0-100）
 
-    def __init__(self, render_one, base_path, is_hires=False):
-        super().__init__()
+    def __init__(self, render_one, base_path, is_hires=False, parent=None):
+        super().__init__(parent)
         self.render_one = render_one
         self.base_path = base_path
         self.is_hires = is_hires
@@ -357,8 +367,8 @@ class HiresWorker(QThread):
     progress = pyqtSignal(int)  # 進捗（0-100）
     status_update = pyqtSignal(str)  # ステータス更新
 
-    def __init__(self, render_one, base_path, path_id):
-        super().__init__()
+    def __init__(self, render_one, base_path, path_id, parent=None):
+        super().__init__(parent)
         self.render_one = render_one
         self.base_path = base_path
         self.path_id = path_id
@@ -859,7 +869,7 @@ class PathViewWidget(QWidget):
                 base_path = f"train_scan_{self.path_id}"
 
             # 保存ワーカーを作成・開始
-            self.save_worker = SaveWorker(self.render_one, base_path, is_hires=False)
+            self.save_worker = SaveWorker(self.render_one, base_path, is_hires=False, parent=self)
             self.save_worker.finished.connect(self._on_save_finished)
             self.save_worker.progress.connect(self._on_save_progress)
             self.save_worker.start()
@@ -895,7 +905,7 @@ class PathViewWidget(QWidget):
                 base_path = f"train_scan_{self.path_id}"
 
             # 高精細ワーカーを作成・開始
-            self.hires_worker = HiresWorker(self.render_one, base_path, self.path_id)
+            self.hires_worker = HiresWorker(self.render_one, base_path, self.path_id, parent=self)
             self.hires_worker.finished.connect(self._on_hires_finished)
             self.hires_worker.progress.connect(self._on_hires_progress)
             self.hires_worker.status_update.connect(self._on_hires_status_update)
@@ -1156,6 +1166,12 @@ class MultiViewWindow(QMainWindow):
             return
 
         path_widget = self.path_widgets[path_id]
+
+        # 削除前に実行中のスレッドがあれば停止を待つ（クラッシュ防止）
+        if hasattr(path_widget, "save_worker") and path_widget.save_worker and path_widget.save_worker.isRunning():
+            path_widget.save_worker.wait()
+        if hasattr(path_widget, "hires_worker") and path_widget.hires_worker and path_widget.hires_worker.isRunning():
+            path_widget.hires_worker.wait()
 
         # 削除前に品質情報を取得
         score = None
