@@ -109,8 +109,6 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
         # blurmaskに追加する。maskは平均化されたマスク
         mask = blurmask.add_frame(diff)
-        if logger.getEffectiveLevel() <= INFO:
-            cv2.imshow("diff", diff)
 
         # maskは、diffの値が大きいピクセル。
         logger.debug(f"mask {np.min(mask)}, {np.max(mask)}")
@@ -165,26 +163,9 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         # print()
 
         if logger.getEffectiveLevel() == DEBUG:
-            preview_scale = (
-                1000 * 1000 / (base_frame.shape[0] * base_frame.shape[1])
-            ) ** 0.5
-            if preview_scale > 1.0:
-                preview_scale = 1.0
-            base_scaled = cv2.resize(
-                base_frame, (0, 0), fx=preview_scale, fy=preview_scale
-            )
-            next_scaled = cv2.resize(
-                next_frame, (0, 0), fx=preview_scale, fy=preview_scale
-            )
-            diff = diffImage(
-                base_scaled,
-                next_scaled,
-                -dx * preview_scale,
-                -dy * preview_scale,
-                mode="checker",
-            )
-            cv2.imshow("diff", diff)
-            cv2.waitKey(1)
+            # デバッグ表示はメインスレッド以外ではクラッシュの原因になるため、
+            # コマンドライン実行時のみ有効にするか、あるいは完全に無効化する
+            pass
 
         if dumped is None:
             dumped = np.array((dx, dy))
@@ -210,18 +191,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         )
 
         if SHOW_DEBUG_WINDOWS:
-            diff2 = (
-                base_masked_extended[
-                    max_loc[1] : height + max_loc[1], max_loc[0] : width + max_loc[0]
-                ]
-                - next_masked
-            )
-            cv2.imshow("base_masked", base_masked)
-            cv2.imshow("base_masked_extended", base_masked_extended)
-            cv2.imshow("next_masked", next_masked)
-            cv2.imshow("matchscore", matchrect.value)
-            cv2.imshow("diff2", diff2)
-            cv2.waitKey(0)
+            # GUIスレッド以外でのimshowはクラッシュの原因になるため無効化
+            pass
 
         # プログレスコールバックを呼び出し
         if progress_callback is not None:

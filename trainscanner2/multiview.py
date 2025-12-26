@@ -309,7 +309,7 @@ class ProgressButton(QPushButton):
 class SaveWorker(QThread):
     """並列処理で画像保存を行うワーカークラス"""
 
-    finished = pyqtSignal(str, bool)  # ファイルパス, 成功フラグ
+    task_finished = pyqtSignal(str, bool)  # ファイルパス, 成功フラグ
     progress = pyqtSignal(int)  # 進捗（0-100）
 
     def __init__(self, render_one, base_path, is_hires=False, parent=None):
@@ -345,31 +345,39 @@ class SaveWorker(QThread):
                     percentage = int((current / total) * 60) + 30  # 30-90%の範囲
                     self.progress.emit(percentage)
 
-                # stitch関数を呼び出し
-                render = stitch(
+                # stitch関数を呼び出し（生存期間を確保）
+                self.hires_render = stitch(
                     tspos2file=tspos2_path,
                     verbose=False,
                     progress_callback=update_progress,
                 )
 
                 # 高解像度画像を保存
-                render.save(base_path=hires_base_path)
+                self.hires_render.save(base_path=hires_base_path)
                 self.progress.emit(100)
-                self.finished.emit(f"{hires_base_path}.png", True)
+
+                # クリーンアップ前に待機
+                self.msleep(50)
+                self.hires_render = None
+                self.msleep(50)
+
+                self.task_finished.emit(f"{hires_base_path}.png", True)
             else:
                 # 通常保存
                 self.render_one.save(base_path=self.base_path)
                 self.progress.emit(100)
-                self.finished.emit(f"{self.base_path}.png", True)
+                self.msleep(50)
+                self.task_finished.emit(f"{self.base_path}.png", True)
 
         except Exception as e:
-            self.finished.emit(str(e), False)
+            self.hires_render = None
+            self.task_finished.emit(str(e), False)
 
 
 class HiresWorker(QThread):
     """高精細画像生成専用のワーカークラス（並列処理用）"""
 
-    finished = pyqtSignal(str, bool)  # ファイルパス, 成功フラグ
+    task_finished = pyqtSignal(str, bool)  # ファイルパス, 成功フラグ
     progress = pyqtSignal(int)  # 進捗（0-100）
     status_update = pyqtSignal(str)  # ステータス更新
 
@@ -409,8 +417,8 @@ class HiresWorker(QThread):
                     self.progress.emit(percentage)
                     self.status_update.emit(f"フレーム {current}/{total} を処理中...")
 
-            # stitch関数を呼び出し
-            render = stitch(
+            # stitch関数を呼び出し、返り値をインスタンス変数として保持（生存期間を確保）
+            self.hires_render = stitch(
                 tspos2file=tspos2_path,
                 verbose=False,
                 progress_callback=update_progress,
@@ -421,15 +429,24 @@ class HiresWorker(QThread):
 
             # 高解像度画像を保存
             hires_base_path = f"{self.base_path}_hires"
-            render.save(base_path=hires_base_path)
+            self.hires_render.save(base_path=hires_base_path)
 
             self.progress.emit(100)
             self.status_update.emit("完了")
-            self.finished.emit(f"{hires_base_path}.png", True)
 
+            # クリーンアップ前に少し待つ（OS/Qtのファイル・メモリアクセスの安定化）
+            self.msleep(100)
+
+            # クリーンアップ前に少し待つ（OS/Qtのファイル・メモリアクセスの安定化）
+            self.msleep(50)
+            self.hires_render = None
+            self.msleep(50)
+
+            # 結果を通知
+            self.task_finished.emit(f"{hires_base_path}.png", True)
         except Exception as e:
-            self.status_update.emit("エラー")
-            self.finished.emit(str(e), False)
+            self.hires_render = None
+            self.task_finished.emit(str(e), False)
 
 
 class PathViewWidget(QWidget):
@@ -859,8 +876,11 @@ class PathViewWidget(QWidget):
             self.save_worker = SaveWorker(
                 self.render_one, base_path, is_hires=False, parent=self
             )
-            self.save_worker.finished.connect(self._on_save_finished)
+            self.save_worker.task_finished.connect(self._on_save_finished)
             self.save_worker.progress.connect(self._on_save_progress)
+
+            # 本来のfinishedシグナルにdeleteLaterを接続
+            self.save_worker.finished.connect(self.save_worker.deleteLater)
             self.save_worker.start()
 
             # ボタンを処理中状態に設定
@@ -900,9 +920,12 @@ class PathViewWidget(QWidget):
             self.hires_worker = HiresWorker(
                 self.render_one, base_path, self.path_id, parent=self
             )
-            self.hires_worker.finished.connect(self._on_hires_finished)
+            self.hires_worker.task_finished.connect(self._on_hires_finished)
             self.hires_worker.progress.connect(self._on_hires_progress)
             self.hires_worker.status_update.connect(self._on_hires_status_update)
+
+            # 本来のfinishedシグナルにdeleteLaterを接続
+            self.hires_worker.finished.connect(self.hires_worker.deleteLater)
             self.hires_worker.start()
 
             # ボタンを処理中状態に設定
@@ -924,10 +947,10 @@ class PathViewWidget(QWidget):
 
     def _on_save_finished(self, result, success):
         """通常保存完了時の処理"""
-        # シグナルを切断して、重複実行や破棄後のアクセスを防ぐ
+        # シグナルを切断（task_finishedを使用）
         if self.save_worker:
             try:
-                self.save_worker.finished.disconnect(self._on_save_finished)
+                self.save_worker.task_finished.disconnect(self._on_save_finished)
                 self.save_worker.progress.disconnect(self._on_save_progress)
             except Exception:
                 pass
@@ -948,9 +971,8 @@ class PathViewWidget(QWidget):
             self.save_button.setEnabled(False)  # 完了後は無効化
         self._update_button_states()
 
-        # ワーカーをクリーンアップ
+        # ワーカー変数をクリア（deleteLaterは別途実行される）
         if self.save_worker:
-            self.save_worker.deleteLater()
             self.save_worker = None
 
     def _on_hires_finished(self, result, success):
@@ -958,7 +980,7 @@ class PathViewWidget(QWidget):
         # シグナルを切断
         if self.hires_worker:
             try:
-                self.hires_worker.finished.disconnect(self._on_hires_finished)
+                self.hires_worker.task_finished.disconnect(self._on_hires_finished)
                 self.hires_worker.progress.disconnect(self._on_hires_progress)
                 self.hires_worker.status_update.disconnect(self._on_hires_status_update)
             except Exception:
@@ -984,9 +1006,8 @@ class PathViewWidget(QWidget):
             self.save_button.setEnabled(False)
         self._update_button_states()
 
-        # ワーカーをクリーンアップ
+        # ワーカー変数をクリア
         if self.hires_worker:
-            self.hires_worker.deleteLater()
             self.hires_worker = None
 
     def _on_save_progress(self, value):

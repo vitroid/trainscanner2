@@ -17,6 +17,7 @@ try:
         QPainter,
         QPen,
         QColor,
+        QKeySequence,
     )
     from PyQt6.QtCore import Qt, QTimer, QMimeData
 
@@ -195,12 +196,14 @@ if PYQT6_AVAILABLE:
         def __init__(self, parent=None):
             super().__init__(parent)
             self.setAcceptDrops(True)
-            self.parent_window = None
+            self.parent_window = parent
             # 最初から全画面を覆うように設定（親がQMainWindowの場合）
             if parent:
                 self.resize(parent.size())
             # マウスイベントを透過させない（ドロップを確実に奪うため）
             self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+            # キーイベントを受け取れるようにする
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         def paintEvent(self, event):
             painter = QPainter(self)
@@ -224,11 +227,39 @@ if PYQT6_AVAILABLE:
             font.setPointSize(24)
             font.setBold(True)
             painter.setFont(font)
-            text = "動画ファイルをここにドロップ"
-            text_rect = painter.fontMetrics().boundingRect(text)
+
+            main_text = "動画ファイルをここにドロップ"
+            sub_text = "または YouTube URL をペースト"
+
+            # メインテキスト
+            text_rect = painter.fontMetrics().boundingRect(main_text)
             text_x = (self.width() - text_rect.width()) // 2
-            text_y = self.height() // 2
-            painter.drawText(text_x, text_y, text)
+            text_y = self.height() // 2 - 20
+            painter.drawText(text_x, text_y, main_text)
+
+            # サブテキスト
+            font.setPointSize(14)
+            font.setBold(False)
+            painter.setFont(font)
+            sub_text_rect = painter.fontMetrics().boundingRect(sub_text)
+            sub_x = (self.width() - sub_text_rect.width()) // 2
+            sub_y = text_y + 40
+            painter.drawText(sub_x, sub_y, sub_text)
+
+        def keyPressEvent(self, event):
+            # ペースト操作 (Cmd+V / Ctrl+V) をハンドル
+            if event.matches(QKeySequence.StandardKey.Paste):
+                clipboard = QApplication.clipboard()
+                text = clipboard.text().strip()
+                if self._is_youtube_url(text):
+                    if self.parent_window:
+                        self.parent_window.processing_started = True
+                        self.hide()
+                        QTimer.singleShot(
+                            100, lambda: self.parent_window.start_processing(text)
+                        )
+                    return
+            super().keyPressEvent(event)
 
         def _is_valid_video_file(self, file_path: str) -> bool:
             video_extensions = [

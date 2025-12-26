@@ -25,7 +25,8 @@ trainscanner2
 - 傾きも自動的に補正されます。
 - 高解像度画像も生成できます。
 - できるだけメモリーを浪費しないように設計されています。
-- YouTube の URL をドロップしてスキャンできるようになりました。
+- YouTube の URL をドロップ(あるいはペースト)してスキャンできるようになりました。
+  - 例: https://www.youtube.com/watch?v=K5AKoHhUhok
 
 ## 短所
 
