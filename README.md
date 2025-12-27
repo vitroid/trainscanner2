@@ -26,7 +26,11 @@ trainscanner2
 - 高解像度画像も生成できます。
 - できるだけメモリーを浪費しないように設計されています。
 - YouTube の URL をドロップ(あるいはペースト)してスキャンできるようになりました。
-  - 例: https://www.youtube.com/watch?v=K5AKoHhUhok
+  - 例: https://youtu.be/ME415Q1jCA4
+  - https://www.youtube.com/shorts/uWddMNqK-8M
+  - https://youtube.com/shorts/NcvS_FhGbVs?feature=share
+  - https://youtube.com/shorts/wfGNFcdV8Y8?feature=share
+  - https://youtube.com/shorts/4QFLOVuFhZM?feature=share
 
 ## 短所
 
