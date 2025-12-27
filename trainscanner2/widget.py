@@ -17,14 +17,31 @@ def cv2_to_qpixmap(cv_img):
     """OpenCVの画像(BGR)をQPixmapに変換する"""
     if cv_img is None:
         return None
-    height, width, channel = cv_img.shape
-    bytes_per_line = 3 * width
-    # BGRからRGBに変換
-    rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-    q_img = QImage(
-        rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
-    )
-    return QPixmap.fromImage(q_img)
+    try:
+        # カラー画像の場合
+        if len(cv_img.shape) == 3:
+            height, width, channel = cv_img.shape
+            bytes_per_line = 3 * width
+            # BGRからRGBに変換し、確実にコピーを作成する
+            rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+            q_img = QImage(
+                rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
+            ).copy()  # ここでコピーを取るのがクラッシュ防止に重要
+            return QPixmap.fromImage(q_img)
+        else:
+            # グレースケール画像の場合
+            height, width = cv_img.shape
+            bytes_per_line = width
+            q_img = QImage(
+                cv_img.data,
+                width,
+                height,
+                bytes_per_line,
+                QImage.Format.Format_Grayscale8,
+            ).copy()
+            return QPixmap.fromImage(q_img)
+    except Exception:
+        return None
 
 
 class ImageStripsWidget(QWidget):

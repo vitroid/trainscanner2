@@ -5,7 +5,6 @@
 from logging import getLogger, basicConfig, INFO, DEBUG
 import json
 import numpy as np
-import matplotlib.pyplot as plt
 import pykalman
 import cv2
 from pyperbox import Rect
