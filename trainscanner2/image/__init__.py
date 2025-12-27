@@ -3,7 +3,6 @@ import numpy as np
 from pyperbox import Rect, Range
 import math
 from dataclasses import dataclass
-import matplotlib.pyplot as plt
 import logging
 
 # trainscanner2/image/__init__.py
@@ -116,10 +115,6 @@ class MatchRect:
 
     value: np.ndarray
     rect: Rect
-
-    _figure = None
-    _axes = None
-    _colorbar = None
 
     def _peak_subpixel(self):
         if self.value.shape[0] == 1:
