@@ -315,8 +315,15 @@ def match_rect(target: ImageRect, focus: ImageRect) -> MatchRect:
     return MatchRect(value=scores, rect=rect)
 
 
-def standardize(x):
-    return ((x - np.mean(x)) / (np.std(x) + 1e-6)).astype(np.float32)
+def standardize(frame):
+    # 既にグレースケールの場合は変換をスキップ
+    if len(frame.shape) == 2:
+        gray = frame
+    elif len(frame.shape) == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    else:
+        raise ValueError(f"Invalid image shape: {frame.shape}")
+    return ((gray - np.mean(gray)) / (np.std(gray) + 1e-6)).astype(np.float32)
 
 
 def diffImage(frame1, frame2, dx, dy, mode="stack"):

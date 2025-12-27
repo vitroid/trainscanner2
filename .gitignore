@@ -210,4 +210,5 @@ motions.json
 *.png
 motions_test.json
 *.pngs/
+experimental/
 

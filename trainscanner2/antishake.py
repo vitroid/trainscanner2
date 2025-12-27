@@ -1,17 +1,7 @@
 import cv2
 import numpy as np
 import sys
-
-
-def standardize(frame):
-    # 既にグレースケールの場合は変換をスキップ
-    if len(frame.shape) == 2:
-        gray = frame
-    elif len(frame.shape) == 3:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    else:
-        raise ValueError(f"Invalid image shape: {frame.shape}")
-    return ((gray - np.mean(gray)) / np.std(gray)).astype(np.float32)
+from trainscanner2.image import standardize
 
 
 def shiftx(frame, dx):
