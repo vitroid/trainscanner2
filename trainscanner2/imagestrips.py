@@ -1,69 +1,64 @@
-# 縦に長い画像の集合体で巨大画像を表現するClass
-from re import S
 import numpy as np
 import cv2
 import tempfile
 import os
-from logging import getLogger
 import shutil
-
+from logging import getLogger
 from trainscanner2.image import ImageRect
 
 
 class ImageStrips:
+    """縦に長い画像の集合体で巨大画像を表現するクラス。
+    最新部分は buffer に保持し、確定した左側の部分は strips (images) として保存する。
+    """
+
     logger = getLogger(__name__)
 
     def __init__(self, cache=False):
-        # 辞書のキーはtrain_position
         self.buffer = ImageRect()
-        if cache:
-            self.cache_dir = tempfile.mkdtemp()
-        else:
-            self.cache_dir = None
+        self.cache_dir = tempfile.mkdtemp() if cache else None
         self.shapes = []
-        self.images = []
+        self.images = []  # cache=True時はファイルパス、False時はnp.ndarrayが入る
 
     def __del__(self):
-        if self.cache_dir is not None:
-            shutil.rmtree(self.cache_dir)
+        if self.cache_dir:
+            shutil.rmtree(self.cache_dir, ignore_errors=True)
+
+    def _get_strip(self, index):
+        """指定したインデックスの画像を読み込む（キャッシュ対応）"""
+        img = self.images[index]
+        if isinstance(img, str):
+            return cv2.imread(img)
+        return img
 
     def put_image(self, lefttop: tuple[int, int], image: np.ndarray):
         self.put_imagerect(ImageRect(lefttop=lefttop, image=image))
 
-    def put_imagerect(
-        self,
-        imagerect: ImageRect,
-    ):
-        """
-        画像を追加する
-
-        imagerectの右半分を、self.bufferに重ねる。
-        常に右にずれた場所に画像を重ねるので、imagerectの中央よりも左側の領域はこのあと変更される可能性がないのでメモリーからpurgeする。
-        右部分はself.bufferに残す。
-        """
+    def put_imagerect(self, imagerect: ImageRect):
+        """画像を追加し、確定した左側を切り出して保存する。"""
         center = imagerect.left + imagerect.width // 2
+
         if self.buffer.image is None:
-            lefthalf, righthalf = imagerect.split_vertically(imagerect.width // 2)
-            self.buffer.put_imagerect(righthalf)
-            if self.cache_dir is not None:
-                filename = self.cache_dir + f"/{len(self.images):05d}.png"
-                cv2.imwrite(filename, lefthalf.image)
-                self.images.append(filename)
-            else:
-                self.images.append(lefthalf.image)
-            self.shapes.append(lefthalf.shape)
+            # 初回追加
+            left, right = imagerect.split_vertically(imagerect.width // 2)
+            self.buffer.put_imagerect(right)
+            self._add_strip(left)
             return
+
         if self.buffer.left < center:
-            # 移動があった。
+            # 右方向に進んだ場合、重なる部分を合成して左端を切り出す
             displacement = center - self.buffer.left
             alpha = np.concatenate(
-                (np.linspace(0, 1.0, displacement), np.ones(imagerect.width // 2))
+                [np.linspace(0, 1.0, displacement), np.ones(imagerect.width // 2)]
             )
-            elim = imagerect.width - alpha.shape[0]
+
+            elim = imagerect.width - len(alpha)
             if elim < 0:
-                return  # どういうケース???
+                return
+
             _, overlay = imagerect.split_vertically(elim)
 
+            # bufferを拡張して合成
             new_buffer = ImageRect()
             new_buffer.put_imagerect(self.buffer)
             new_buffer.put_image(
@@ -71,197 +66,109 @@ class ImageStrips:
                 image=overlay.image,
                 linear_alpha=alpha,
             )
-            # いまはスムーズにつながなくていい
+
+            # 左側の確定部分を切り出し
             strip, self.buffer = new_buffer.split_vertically(displacement)
-            if self.cache_dir is not None:
-                filename = self.cache_dir + f"/{len(self.images):05d}.png"
-                cv2.imwrite(filename, strip.image)
-                self.images.append(filename)
-            else:
-                self.images.append(strip.image)
-            self.shapes.append(strip.shape)
+            self._add_strip(strip)
+
+    def _add_strip(self, strip: ImageRect):
+        """確定した短冊を保存する"""
+        self.shapes.append(strip.shape)
+        if self.cache_dir:
+            path = os.path.join(self.cache_dir, f"{len(self.images):05d}.png")
+            cv2.imwrite(path, strip.image)
+            self.images.append(path)
+        else:
+            self.images.append(strip.image)
+
+    def _get_padded_images(self, start=0, width=None):
+        """表示や保存のために、高さを揃えた画像のリストを生成するイテレータ"""
+        if not self.images and (self.buffer is None or self.buffer.image is None):
             return
 
-    def get_image(self, start=0, width=None):
-        """
-        現在の画像を1枚に結合して返す（表示用）
-
-        【データ構造】
-        - self.images: 縦長画像のリスト（左から右へ）
-        - self.buffer: 最後の部分（まだimagesに追加されていない）
-
-        【高さの処理】
-        - 画像の高さが異なる場合、最大の高さに合わせてパディング
-        - 上下中央に配置
-
-        Returns:
-            np.ndarray: 結合された画像、またはNone（画像がない場合）
-        """
-        # self.logger.debug(f"get_image(start={start}, width={width})")
-        if len(self.images) == 0 and self.buffer is None:
-            return None
-
-        # bufferだけの場合
-        if len(self.images) == 0 and self.buffer is not None:
-            return self.buffer.image if self.buffer.image is not None else None
-
-        if len(self.images) <= start:
-            return None
-
-        # imagesを横に連結
-        if len(self.images) > 0:
-            # すべての画像（images + buffer）を集める
-            # all_images = [self.images[i] for i in range(start, len(self.images))]
-            total_width = sum([x[1] for x in self.shapes[start:]])
-            if (
-                self.buffer is not None
-                and self.buffer.image is not None
-                and width is not None
-                and total_width < width
-            ):
-                # all_images.append(self.buffer.image)
-                total_width += self.buffer.image.shape[1]
-
-            # if not all_images:
-            #     return None
-            # 最大の高さを取得
-            max_height = max([x[0] for x in self.shapes[start:]])
-
-            # 高さを揃える（上下中央にパディング）
-            padded_images = []
-            accum = 0
-            for img in self.images[start:]:
-                if self.cache_dir is not None:
-                    img = cv2.imread(img)
-                h, w = img.shape[:2]
-                accum += w
-                if h < max_height:
-                    # パディングが必要
-                    pad_top = (max_height - h) // 2
-                    pad_bottom = max_height - h - pad_top
-                    if len(img.shape) == 3:  # カラー画像
-                        padded = np.pad(
-                            img,
-                            ((pad_top, pad_bottom), (0, 0), (0, 0)),
-                            mode="constant",
-                        )
-                    else:  # グレースケール
-                        padded = np.pad(
-                            img, ((pad_top, pad_bottom), (0, 0)), mode="constant"
-                        )
-                    padded_images.append(padded)
-                else:
-                    padded_images.append(img)
-                if width is not None and accum >= width:
-                    break
-            else:
-                padded_images.append(self.buffer.image)
-
-            if len(padded_images) > 0:
-                # 横に連結
-                combined = np.hstack(padded_images)
-                return combined
-
-        return None
-
-    def save_to_file(self, filename):
-        """
-        画像をファイルに保存する（メモリ効率的な方法）
-
-        【メモリ効率化の工夫】
-        - numpy.memmapを使って仮想メモリ上で画像を構築
-        - 短冊ごとに書き込むため、巨大画像全体をメモリに読み込む必要がない
-        - ディスクスワップを使うため、物理メモリが足りなくても動作する
-
-        【制限事項】
-        - 一時ファイルとして.datファイルを作成（処理後に削除）
-        - ディスク容量は必要（画像サイズの3倍程度）
-
-        Args:
-            filename: 保存先ファイル名（.png, .tiffなど）
-        """
-        if not self.images:
-            return
-
-        # 全体のサイズを計算
-        # ここで全画像を読みこむのでメモリーがたくさん必要になる。
-        # all_images = list(self.images.values())
-        # if self.buffer is not None and self.buffer.image is not None:
-        #     all_images.append(self.buffer.image)
-
-        # if not all_images:
-        #     return
-
-        total_width = sum([x[1] for x in self.shapes])
-        max_height = max([x[0] for x in self.shapes])
-        if self.buffer is not None and self.buffer.image is not None:
-            total_width += self.buffer.image.shape[1]
-            max_height = max(max_height, self.buffer.image.shape[0])
-
-        # カラーかグレースケールかを判定
-        channels = 3 if len(self.shapes[0]) == 3 else 1
-        shape = (
-            (max_height, total_width, channels)
-            if channels == 3
-            else (max_height, total_width)
+        # 必要な範囲の画像
+        target_indices = (
+            range(start, len(self.images)) if start < len(self.images) else []
         )
 
-        # 一時ファイルを作成（メモリマップド配列用）
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dat")
-        temp_filename = temp_file.name
-        temp_file.close()
+        # 最大の高さを計算
+        relevant_shapes = self.shapes[start:]
+        max_h = max(s[0] for s in relevant_shapes) if relevant_shapes else 0
+        if self.buffer.image is not None:
+            max_h = max(max_h, self.buffer.image.shape[0])
+
+        accum_w = 0
+        for idx in target_indices:
+            img = self._get_strip(idx)
+            accum_w += img.shape[1]
+            yield self._pad_image(img, max_h)
+            if width and accum_w >= width:
+                return
+
+        if self.buffer.image is not None:
+            yield self._pad_image(self.buffer.image, max_h)
+
+    def _pad_image(self, img, target_h):
+        """画像を中央寄せでパディングする"""
+        h, w = img.shape[:2]
+        if h >= target_h:
+            return img
+
+        top = (target_h - h) // 2
+        bottom = target_h - h - top
+        padding = (
+            ((top, bottom), (0, 0), (0, 0))
+            if img.ndim == 3
+            else ((top, bottom), (0, 0))
+        )
+        return np.pad(img, padding, mode="constant")
+
+    def get_image(self, start=0, width=None):
+        """現在の画像を1枚に結合して返す（表示用）"""
+        imgs = list(self._get_padded_images(start, width))
+        return np.hstack(imgs) if imgs else None
+
+    def save_to_file(self, filename):
+        """巨大な画像をメモリ効率を考慮して保存する"""
+        if not self.images and (self.buffer is None or self.buffer.image is None):
+            return
+
+        total_w = sum(s[1] for s in self.shapes) + (
+            self.buffer.image.shape[1] if self.buffer.image is not None else 0
+        )
+        max_h = max(
+            [s[0] for s in self.shapes]
+            + ([self.buffer.image.shape[0]] if self.buffer.image is not None else [0])
+        )
+        channels = (
+            3
+            if len(self.shapes[0]) == 3
+            or (self.buffer.image is not None and self.buffer.image.ndim == 3)
+            else 1
+        )
+
+        shape = (max_h, total_w, 3) if channels == 3 else (max_h, total_w)
+
+        # memmapを使用して巨大画像を作成
+        with tempfile.NamedTemporaryFile(suffix=".dat", delete=False) as tmp:
+            tmp_path = tmp.name
 
         try:
-            # メモリマップド配列を作成（仮想メモリを使用）
-            combined = np.memmap(temp_filename, dtype="uint8", mode="w+", shape=shape)
-
-            # 短冊ごとにコピー（メモリ効率的）
-            x_offset = 0
-            for i, img in enumerate(self.images):
-                if self.cache_dir is not None:
-                    img = cv2.imread(img)
+            mmap = np.memmap(tmp_path, dtype="uint8", mode="w+", shape=shape)
+            x = 0
+            for i, img in enumerate(self._get_padded_images()):
                 h, w = img.shape[:2]
-                # 高さを中央に配置
-                y_offset = (max_height - h) // 2
-
                 if channels == 3:
-                    combined[y_offset : y_offset + h, x_offset : x_offset + w, :] = img
+                    mmap[:, x : x + w, :] = img
                 else:
-                    combined[y_offset : y_offset + h, x_offset : x_offset + w] = img
-
-                x_offset += w
-
-                # メモリマップをフラッシュ（ディスクに書き込む）
+                    mmap[:, x : x + w] = img
+                x += w
                 if i % 20 == 0:
-                    combined.flush()
+                    mmap.flush()
 
-            if self.buffer is not None and self.buffer.image is not None:
-                h, w = self.buffer.image.shape[:2]
-                y_offset = (max_height - h) // 2
-                if channels == 3:
-                    combined[y_offset : y_offset + h, x_offset : x_offset + w, :] = (
-                        self.buffer.image
-                    )
-                else:
-                    combined[y_offset : y_offset + h, x_offset : x_offset + w] = (
-                        self.buffer.image
-                    )
-                x_offset += w
-
-            # 最終的な保存（この時点でメモリが必要になるが、OSのキャッシュを活用）
-            # cv2.imwriteはnumpy配列を受け取るため、memmapも使える
-            self.logger.info(f"Writing image to {filename}...")
-            success = cv2.imwrite(filename, combined)
-
-            # メモリマップを閉じる
-            del combined
-
-            if success:
-                self.logger.info(f"Successfully saved image: {filename}")
-            else:
-                self.logger.error(f"Failed to save image: {filename}")
-
+            self.logger.info(f"Writing to {filename}...")
+            cv2.imwrite(filename, mmap)
+            del mmap
         finally:
-            # 一時ファイルを削除
-            if os.path.exists(temp_filename):
-                os.unlink(temp_filename)
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
