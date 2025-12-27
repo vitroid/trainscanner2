@@ -22,8 +22,6 @@ from trainscanner2.render import PathItem, WindowManager
 # DEBUG表示を有効にするかどうか（環境変数で制御）
 SHOW_DEBUG_WINDOWS = os.environ.get("TRAINSCANNER_DEBUG", "0") == "1"
 
-USE_SMOOTHING = False  # 変位ベクトルの平滑化を有効にする場合はTrueにする
-
 
 def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     """
@@ -154,9 +152,7 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         # video frame index, absolute location of the frame, matchscore
         peak_result = matchrect.peak(subpixel=True)
         if peak_result is None:
-            logger.warning(
-                f"matchrect.peak() returned None for frame {frame_index}, using default values"
-            )
+            logger.warning(f"matchrect.peak() returned None for frame {frame_index}, using default values")
             vx, vy = 0, 0
             max_val = 0.0
         else:
@@ -171,16 +167,15 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
             # コマンドライン実行時のみ有効にするか、あるいは完全に無効化する
             pass
 
-        if USE_SMOOTHING:
-            if dumped is None:
-                dumped = np.array((dx, dy))
-            else:
-                dumped = dumped * (1 - damping) + np.array((dx, dy)) * damping
-                # if show_progress:
-                #     print(
-                #         f"Frame {frame_index}: raw=({dx:.2f}, {dy:.2f}), smoothed=({dumped[0]:.2f}, {dumped[1]:.2f})"
-                #     )
-                dx, dy = dumped
+        if dumped is None:
+            dumped = np.array((dx, dy))
+        else:
+            dumped = dumped * (1 - damping) + np.array((dx, dy)) * damping
+            # if show_progress:
+            #     print(
+            #         f"Frame {frame_index}: raw=({dx:.2f}, {dy:.2f}), smoothed=({dumped[0]:.2f}, {dumped[1]:.2f})"
+            #     )
+            dx, dy = dumped
 
         logger.debug(f"frame_index={frame_index}")
         logger.debug(
@@ -211,10 +206,10 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
 
     with open(tspos2file, "r") as f:
         tspos2 = json.load(f)
-
+    
     # 動画ファイルのパスを決定するロジック
     original_videofile = tspos2["video_path"]
-
+    
     if os.path.exists(original_videofile):
         # 1. まず、記録されているそのままのパス（絶対パス）を試す
         videofile = original_videofile
@@ -224,7 +219,7 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
         basename = os.path.basename(original_videofile)
         tspos2path = os.path.dirname(tspos2file)
         videofile = os.path.join(tspos2path, basename)
-
+        
         if not os.path.exists(videofile):
             # 3. それでも見つからない場合はエラー
             raise FileNotFoundError(
@@ -260,15 +255,9 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
     #     print(f"Total frames to process: {len(tspos2['history'])}")
 
     # last_time = time.time()
-    for frame_index, delta, absolute_position, max_val, unblurred_frame in tqdm(
-        analyze_iter(
-            vl,
-            tspos2=tspos2,
-            show_progress=verbose,
-            progress_callback=progress_callback,
-        ),
-        total=len(tspos2["history"]),
-    ):
+    for frame_index, delta, absolute_position, max_val, unblurred_frame in tqdm(analyze_iter(
+        vl, tspos2=tspos2, show_progress=verbose, progress_callback=progress_callback
+    ), total=len(tspos2["history"])):
         render.put(
             unblurred_frame,
             PathItem(frame_index=frame_index, xy=delta, value=max_val),

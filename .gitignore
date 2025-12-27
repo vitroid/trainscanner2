@@ -211,4 +211,6 @@ motions.json
 motions_test.json
 *.pngs/
 experimental/
+*.tspos2
+
 

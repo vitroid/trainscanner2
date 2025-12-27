@@ -6,12 +6,10 @@ from logging import getLogger, basicConfig, INFO, DEBUG
 import json
 import numpy as np
 import pykalman
+import cv2
 from pyperbox import Rect
 from trainscanner2.image import MatchRect, ImageRect
 from trainscanner2 import PathItem
-
-
-USE_KALMAN = False  # カルマンフィルタを有効にする場合はTrueにする
 
 
 class Path:
@@ -50,16 +48,12 @@ class Path:
     def update(
         self, frame_index: int, xy: tuple[float, float], value: float, missed=False
     ):
-        if USE_KALMAN:
-            new_mean, new_covariance = self.kf.filter_update(
-                self.mean, self.covariance, observation=np.array(xy)
-            )
-            self.mean = new_mean
-            self.covariance = new_covariance
-        else:
-            self.mean = np.array(xy)
-
+        new_mean, new_covariance = self.kf.filter_update(
+            self.mean, self.covariance, observation=np.array(xy)
+        )
         self.history.append(PathItem(frame_index=frame_index, xy=xy, value=value))
+        self.mean = new_mean
+        self.covariance = new_covariance
         if missed:
             self.missed_duration += 1
         else:
