@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from trainscanner2.antishake import standardize
+from trainscanner2.image import standardize
 
 
 @dataclass
