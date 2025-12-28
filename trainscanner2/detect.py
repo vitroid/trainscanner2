@@ -200,8 +200,10 @@ class MotionDetector:
             x, y = this_path.history[-1].xy
             x = float(x)
             y = float(y)
-            assert (x, y) not in this_log
-            this_log[x, y] = f"missed:{path_label};"
+            if (x, y) not in this_log:
+                this_log[x, y] = f"missed:{path_label};"
+            else:
+                this_log[x, y] += f"missed:{path_label};"
             # しかし連続でmax_miss回みのがした場合は、あきらめ、パスをyieldする処理に進む。
             if missed_duration >= max_miss:
                 self.logger.debug(f"long missed {path_label=} {missed_duration=}")
@@ -217,8 +219,8 @@ class MotionDetector:
                 value=maxima[xy],
                 id=self.next_label,
             )
-            self.next_label += 1
             this_log[xy] += f"new:{self.next_label};"
+            self.next_label += 1
 
         # パスの合流を監視する。
         path_labels = list(self.paths.keys())

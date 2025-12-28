@@ -75,15 +75,13 @@ class MultiViewWindow(QMainWindow):
         self.panels_layout = QVBoxLayout(self.panels_container)
         self.panels_layout.setSpacing(10)  # パネル間のスペース
         self.panels_layout.setContentsMargins(10, 10, 10, 10)  # パネル周りのマージン
-
-        # パネルコンテナの初期サイズを設定（幅はウィンドウ幅いっぱい）
-        self.panels_container.setMinimumSize(800, 0)  # 最小幅800px
+        self.panels_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # スクロールエリアで縦スクロールを実現
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidget(self.panels_container)
         self.scroll_area.setWidgetResizable(
-            False
+            True
         )  # ウィジェットサイズを保持（コンテンツサイズに合わせる）
         self.scroll_area.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -193,9 +191,6 @@ class MultiViewWindow(QMainWindow):
         # ウィジェットを表示
         path_widget.setVisible(True)
 
-        # パネルコンテナのサイズを調整
-        self._adjust_panels_container_size()
-
         self.logger.info(
             f"Path {path_id} widget added to vertical layout and made visible"
         )
@@ -241,9 +236,6 @@ class MultiViewWindow(QMainWindow):
         del self.renderers[path_id]
         self.active_path_ids.discard(path_id)
 
-        # パネルコンテナのサイズを調整
-        self._adjust_panels_container_size()
-
         # 完成した画像を削除する場合はログに残す
         score_info = f" (score: {score:.3f})" if score is not None else ""
         self.logger.info(
@@ -274,35 +266,6 @@ class MultiViewWindow(QMainWindow):
         for widget in sorted_widgets:
             self.panels_layout.addWidget(widget)
 
-        # パネルコンテナのサイズを再調整
-        self._adjust_panels_container_size()
-
-    def _adjust_panels_container_size(self):
-        """パネルコンテナのサイズを調整（コンテンツに合わせて）"""
-        if not self.path_widgets:
-            # パネルがない場合は最小サイズ
-            self.panels_container.setMinimumSize(0, 0)
-            return
-
-        # 各パネルの高さを合計
-        total_height = 20  # マージン
-        for path_widget in self.path_widgets.values():
-            if path_widget.isVisible():
-                # パネルの実際の高さを取得
-                widget_height = path_widget.sizeHint().height()
-                if widget_height <= 0:
-                    widget_height = 200  # デフォルト高さ
-                total_height += widget_height + 10  # パネル高さ + スペース
-
-        # パネルコンテナのサイズを設定（幅はウィンドウ幅いっぱい）
-        # スクロールエリアの幅を取得
-        scroll_area_width = self.scroll_area.width()
-        if scroll_area_width <= 0:
-            scroll_area_width = 800  # デフォルト幅
-
-        self.panels_container.setMinimumSize(scroll_area_width, total_height)
-        self.panels_container.resize(scroll_area_width, total_height)
-
     def update_all_paths(self):
         """全てのPathを更新（更新が終わったパネルはスキップ）"""
         updated_count = 0
@@ -327,8 +290,6 @@ class MultiViewWindow(QMainWindow):
     def resizeEvent(self, event):
         """ウィンドウサイズが変更されたとき"""
         super().resizeEvent(event)
-        # パネルコンテナのサイズを調整
-        self._adjust_panels_container_size()
         # プレビューラベルの位置を調整
         if hasattr(self, "preview_label"):
             margin = 20

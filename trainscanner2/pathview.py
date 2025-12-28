@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QScrollArea,
 )
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QImage, QPixmap, QColor
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 
@@ -375,34 +375,11 @@ class PathViewWidget(QWidget):
         self.video_base = video_base
         self.show_gaps = show_gaps
 
-        self.active_panel_style = """
-            QWidget {
-                border: 1px solid #999999;
-                border-radius: 8px;
-                background-color: #ffcccc;
-                margin: 5px;
-                padding: 5px;
-            }
-            QWidget:hover {
-                border: 1px solid #999999;
-                background-color: #ffaaaa;
-            }
-        """
-        self.inactive_panel_style = """
-            QWidget {
-                border: 1px solid #999999;
-                border-radius: 8px;
-                background-color: #f7f7f7;
-                margin: 5px;
-                padding: 5px;
-            }
-            QWidget:hover {
-                border: 1px solid #999999;
-                background-color: #f0f0f0;
-            }
-        """
-        self.setStyleSheet(self.active_panel_style)
-
+        self.is_active = True
+        self.current_score = 0.0
+        self.active_border_style = "2px solid #3498db"
+        self.inactive_border_style = "1px solid #999999"
+        
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(10)
@@ -484,7 +461,6 @@ class PathViewWidget(QWidget):
             QProgressBar { border: 1px solid #ccc; border-radius: 4px; text-align: center; background-color: #f0f0f0; }
             QProgressBar::chunk { background-color: #4CAF50; border-radius: 3px; }
         """
-        self._current_panel_style = self.active_panel_style
         self._apply_panel_style()
 
         self.render_one = None
@@ -492,10 +468,39 @@ class PathViewWidget(QWidget):
         self.last_update_time = 0
         self.save_worker = None
         self.hires_worker = None
-        self.is_active = True
+
+    def _get_score_color(self, score, hover=False):
+        # scoreに比例してhueとsaturationが増えるように
+        # Hue: 0 (Red) -> 100 (Greenish)
+        # Saturation: 0 -> 100
+        # Value: 255
+        s = max(0.0, min(score, 1.0))
+        hue = int(s * 100)
+        sat = int(s * 100)
+        val = 255
+        if hover:
+            val = 240
+        return QColor.fromHsv(hue, sat, val).name()
 
     def _apply_panel_style(self):
-        combined_style = self._current_panel_style + "\n" + self.common_style
+        bg_color = self._get_score_color(self.current_score)
+        hover_color = self._get_score_color(self.current_score, hover=True)
+        border = self.active_border_style if self.is_active else self.inactive_border_style
+        
+        panel_style = f"""
+            QWidget {{
+                border: {border};
+                border-radius: 8px;
+                background-color: {bg_color};
+                margin: 5px;
+                padding: 5px;
+            }}
+            QWidget:hover {{
+                border: {border};
+                background-color: {hover_color};
+            }}
+        """
+        combined_style = panel_style + "\n" + self.common_style
         self.setStyleSheet(combined_style)
 
     def set_active(self, active: bool):
@@ -503,11 +508,9 @@ class PathViewWidget(QWidget):
         if active:
             self.title_label.setText(self.base_title)
             self.title_label.setStyleSheet(self.title_active_style)
-            self._current_panel_style = self.active_panel_style
         else:
             self.title_label.setText(f"{self.base_title} (停止)")
             self.title_label.setStyleSheet(self.title_inactive_style)
-            self._current_panel_style = self.inactive_panel_style
         self._apply_panel_style()
 
     def update_image(self, render_one, force: bool = False):
@@ -551,7 +554,11 @@ class PathViewWidget(QWidget):
 
         if hasattr(render_one, "score"):
             score = render_one.score
-            if score > 0:
+            if score is not None:
+                self.current_score = score
+                self._apply_panel_style()
+                
+            if score is not None and score > 0:
                 self.score_label.setText(f"Score: {score:.3f}")
                 if score > 0.7:
                     self.score_label.setStyleSheet(
