@@ -195,8 +195,10 @@ class Render_one:
 
     @property
     def score(self):
-        # 最後の5フレームで判別する。
-        return np.mean([h.value for h in self.pathitem_history[-20:]])
+        """Path全体の平均スコアを返す（ソートと表示用）"""
+        if not self.pathitem_history:
+            return 0.0
+        return np.mean([h.value for h in self.pathitem_history])
 
     def export_history(self):
         """

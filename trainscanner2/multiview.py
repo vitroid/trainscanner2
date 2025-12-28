@@ -10,6 +10,7 @@ import time
 import os
 import json
 import cv2
+import numpy as np
 from logging import getLogger
 from typing import Dict, Optional, Tuple
 
@@ -94,23 +95,9 @@ class MultiViewWindow(QMainWindow):
         main_layout.addWidget(self.scroll_area)
 
         # プレビュー表示用ラベル（右下にフローティング）
-        self.preview_label = QLabel(self)
-        self.preview_label.setObjectName("previewLabel")
-        self.preview_label.setFixedSize(240, 135)  # 16:9
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setText("Waiting for video...")
-        self.preview_label.setStyleSheet(
-            """
-            #previewLabel {
-                background-color: rgba(0, 0, 0, 150);
-                border: 2px solid #555;
-                border-radius: 5px;
-                color: white;
-                font-size: 10px;
-            }
-        """
-        )
-        self.preview_label.hide()
+        self.preview_label = self._create_pip_label("previewLabel")
+        self.diff_label = self._create_pip_label("diffLabel")
+        self.mask_label = self._create_pip_label("maskLabel")
 
         # キーボードショートカット
         close_shortcut = QShortcut(QKeySequence.StandardKey.Close, self)
@@ -120,6 +107,25 @@ class MultiViewWindow(QMainWindow):
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_all_paths)
         self.update_timer.start(1000)  # 1秒ごとに更新
+
+    def _create_pip_label(self, object_name: str) -> QLabel:
+        label = QLabel(self)
+        label.setObjectName(object_name)
+        label.setFixedSize(240, 135)  # 16:9
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet(
+            f"""
+            #{object_name} {{
+                background-color: rgba(0, 0, 0, 150);
+                border: 2px solid #555;
+                border-radius: 5px;
+                color: white;
+                font-size: 10px;
+            }}
+        """
+        )
+        label.hide()
+        return label
 
     def add_path(self, path_id: int, render_one: object):
         """新しいPathを追加"""
@@ -291,11 +297,31 @@ class MultiViewWindow(QMainWindow):
         """ウィンドウサイズが変更されたとき"""
         super().resizeEvent(event)
         # プレビューラベルの位置を調整
+        margin = 20
+        # 右下にPreview
         if hasattr(self, "preview_label"):
-            margin = 20
             self.preview_label.move(
                 self.width() - self.preview_label.width() - margin,
                 self.height() - self.preview_label.height() - margin,
+            )
+        # Previewの上にDiff
+        if hasattr(self, "diff_label"):
+            self.diff_label.move(
+                self.width() - self.diff_label.width() - margin,
+                self.height()
+                - self.preview_label.height()
+                - self.diff_label.height()
+                - 2 * margin,
+            )
+        # Diffの上にMask
+        if hasattr(self, "mask_label"):
+            self.mask_label.move(
+                self.width() - self.mask_label.width() - margin,
+                self.height()
+                - self.preview_label.height()
+                - self.diff_label.height()
+                - self.mask_label.height()
+                - 3 * margin,
             )
 
     def set_video_base(self, video_base: str):
@@ -309,22 +335,52 @@ class MultiViewWindow(QMainWindow):
 
     def update_preview(self, cv_img):
         """プレビュー画像を更新"""
+        self._update_pip(self.preview_label, cv_img)
+
+    def update_diff(self, cv_img):
+        """Diff画像を更新"""
+        self._update_pip(self.diff_label, cv_img)
+
+    def update_mask(self, cv_img):
+        """Mask画像を更新"""
+        self._update_pip(self.mask_label, cv_img)
+
+    def hide_verbose_previews(self):
+        """DiffとMaskを隠す"""
+        if hasattr(self, "diff_label"):
+            self.diff_label.hide()
+        if hasattr(self, "mask_label"):
+            self.mask_label.hide()
+
+    def _update_pip(self, label, cv_img):
         if cv_img is None:
             return
 
+        # float型の場合は0-255のuint8に変換
+        if cv_img.dtype != np.uint8:
+            # 正規化
+            min_val = np.min(cv_img)
+            max_val = np.max(cv_img)
+            if max_val > min_val:
+                cv_img = (cv_img - min_val) / (max_val - min_val) * 255
+            else:
+                cv_img = cv_img.copy()
+                cv_img[:] = 0
+            cv_img = cv_img.astype(np.uint8)
+
         # 小さくリサイズ（アスペクト比維持）
         h, w = cv_img.shape[:2]
-        target_w = self.preview_label.width()
-        target_h = self.preview_label.height()
+        target_w = label.width()
+        target_h = label.height()
 
         scale = min(target_w / w, target_h / h)
         small_img = cv2.resize(cv_img, (0, 0), fx=scale, fy=scale)
 
         pixmap = cv2_to_qpixmap(small_img)
         if pixmap:
-            self.preview_label.setPixmap(pixmap)
-            if self.preview_label.isHidden():
-                self.preview_label.show()
+            label.setPixmap(pixmap)
+            if label.isHidden():
+                label.show()
 
     def clear_all_paths(self):
         """すべてのPath（パネル）を削除して初期状態に戻す"""
@@ -429,6 +485,21 @@ class MultiViewManager:
         """プレビューを更新"""
         if self.window is not None:
             self.window.update_preview(cv_img)
+
+    def update_diff(self, cv_img):
+        """Diffを更新"""
+        if self.window is not None:
+            self.window.update_diff(cv_img)
+
+    def update_mask(self, cv_img):
+        """Maskを更新"""
+        if self.window is not None:
+            self.window.update_mask(cv_img)
+
+    def hide_verbose_previews(self):
+        """詳細プレビューを非表示"""
+        if self.window is not None:
+            self.window.hide_verbose_previews()
 
     def set_video_base(self, video_base: str):
         """ビデオのベース名を設定"""

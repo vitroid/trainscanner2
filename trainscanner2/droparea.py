@@ -70,17 +70,50 @@ class DropAreaWidget(QWidget):
     def keyPressEvent(self, event):
         # ペースト操作 (Cmd+V / Ctrl+V) をハンドル
         if event.matches(QKeySequence.StandardKey.Paste):
-            clipboard = QApplication.clipboard()
-            text = clipboard.text().strip()
-            if self._is_youtube_url(text):
-                if self.parent_window:
-                    self.parent_window.processing_started = True
-                    self.hide()
-                    QTimer.singleShot(
-                        100, lambda: self.parent_window.start_processing(text)
-                    )
+            if self.handle_paste():
                 return
         super().keyPressEvent(event)
+
+    def handle_paste(self) -> bool:
+        clipboard = QApplication.clipboard()
+        mime_data = clipboard.mimeData()
+
+        target = None
+        # 1. クリップボードにURL（ファイルパス含む）が含まれている場合
+        if mime_data.hasUrls():
+            urls = mime_data.urls()
+            if urls:
+                file_path = urls[0].toLocalFile()
+                url_str = urls[0].toString()
+                if file_path and self._is_valid_video_file(file_path):
+                    target = file_path
+                elif self._is_youtube_url(url_str):
+                    target = url_str
+
+        # 2. テキストとしてパスやURLが貼り付けられた場合
+        if not target and mime_data.hasText():
+            text = mime_data.text().strip()
+            # 引用符で囲まれている場合を考慮
+            if (text.startswith('"') and text.endswith('"')) or (
+                text.startswith("'") and text.endswith("'")
+            ):
+                text = text[1:-1]
+
+            if self._is_youtube_url(text):
+                target = text
+            elif os.path.exists(text) and self._is_valid_video_file(text):
+                target = text
+
+        if target:
+            if self.parent_window:
+                self.parent_window.processing_started = True
+                self.hide()
+                # 100msの遅延を入れてOSのクリーンアップ時間を確保してから開始指示
+                QTimer.singleShot(
+                    100, lambda: self.parent_window.start_processing(target)
+                )
+            return True
+        return False
 
     def _is_valid_video_file(self, file_path: str) -> bool:
         video_extensions = [

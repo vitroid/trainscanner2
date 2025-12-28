@@ -31,6 +31,7 @@ trainscanner2
   - https://youtube.com/shorts/NcvS_FhGbVs?feature=share
   - https://youtube.com/shorts/wfGNFcdV8Y8?feature=share
   - https://youtube.com/shorts/4QFLOVuFhZM?feature=share
+  - ひのとりミュージアムさんの完璧なサイドビュー https://www.youtube.com/shorts/oBDDACmtdjc
 
 ## 短所
 

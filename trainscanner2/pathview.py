@@ -379,7 +379,7 @@ class PathViewWidget(QWidget):
         self.current_score = 0.0
         self.active_border_style = "2px solid #3498db"
         self.inactive_border_style = "1px solid #999999"
-        
+
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(10)
@@ -475,8 +475,8 @@ class PathViewWidget(QWidget):
         # Saturation: 0 -> 100
         # Value: 255
         s = max(0.0, min(score, 1.0))
-        hue = int(s * 100)
-        sat = int(s * 100)
+        hue = int(s * 255)
+        sat = int(s * 255)
         val = 255
         if hover:
             val = 240
@@ -485,8 +485,10 @@ class PathViewWidget(QWidget):
     def _apply_panel_style(self):
         bg_color = self._get_score_color(self.current_score)
         hover_color = self._get_score_color(self.current_score, hover=True)
-        border = self.active_border_style if self.is_active else self.inactive_border_style
-        
+        border = (
+            self.active_border_style if self.is_active else self.inactive_border_style
+        )
+
         panel_style = f"""
             QWidget {{
                 border: {border};
@@ -557,7 +559,7 @@ class PathViewWidget(QWidget):
             if score is not None:
                 self.current_score = score
                 self._apply_panel_style()
-                
+
             if score is not None and score > 0:
                 self.score_label.setText(f"Score: {score:.3f}")
                 if score > 0.7:

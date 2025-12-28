@@ -98,12 +98,8 @@ class BlurMask3:
         decayed = self.mask * 0.9
         self.mask = cv2.max(diff, decayed)
 
-        # if self.logger.getEffectiveLevel() <= INFO:
-        #     cv2.imshow("diff", diff)
-        #     cv2.imshow("mask", self.mask / (np.max(self.mask) + 1e-6))
-        #     cv2.waitKey(0 if self.logger.getEffectiveLevel() == DEBUG else 1)
         self.logger.debug("----------")
-        return self.mask
+        return diff, self.mask
 
 
 def normalize(x):
@@ -180,15 +176,15 @@ def analyze_iter(vl, scaling_ratio=1.0):
         antimasked_hdr_base = std_hdr(base_frame) * antimask
         antimasked_hdr_next = std_hdr(next_frame) * antimask
 
-        # 二乗差分画像を作る
         # diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
         # blurmaskに追加する。maskは平均化されたマスク
         # mask = blurmask.add_frame(diff)
-        mask = blurmask.add_frame(antimasked_hdr_next)
+        diff, mask = blurmask.add_frame(antimasked_hdr_next)
 
         # maskは、diffの値が大きいピクセル。
         logger.debug(f"mask {np.min(mask)}, {np.max(mask)}")
-        mask -= np.min(mask)
+        mask_view = mask.copy()
+        mask_view -= np.min(mask_view)
 
         # 平均背景をさしひいて、前景を強調する。
         # 今はマスクを使っていない。
@@ -213,7 +209,7 @@ def analyze_iter(vl, scaling_ratio=1.0):
         # match_rectはrect付き行列。
         matchrect = match_rect(base_imagerect, next_imagerect)
 
-        yield frame_index, abs_loc, matchrect, unblurred_scaled_frame
+        yield frame_index, abs_loc, matchrect, unblurred_scaled_frame, diff, mask
 
 
 def main():
@@ -263,7 +259,7 @@ def main():
         vl.seek(47 * 30)
 
     with Storer("motions_test.json") as storer:
-        for frame_index, absolute_position, matchrect, _ in analyze_iter(
+        for frame_index, absolute_position, matchrect, _, _, _ in analyze_iter(
             vl, scaling_ratio=scale
         ):
             storer.append(frame_index, absolute_position, matchrect)

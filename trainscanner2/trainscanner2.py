@@ -8,6 +8,7 @@ from logging import getLogger, INFO, DEBUG, WARNING, basicConfig
 from tqdm import tqdm
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtCore import QTimer
 
 from trainscanner2.video import video_loader_factory
@@ -61,15 +62,20 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
         )
 
     def iterator():
-        for frame_index, absolute_position, matchscore, scaled_frame in analyze_iter(
-            vl, scaling_ratio=scale
-        ):
-            yield frame_index, absolute_position, matchscore, scaled_frame
+        for (
+            frame_index,
+            absolute_position,
+            matchscore,
+            scaled_frame,
+            diff,
+            mask,
+        ) in analyze_iter(vl, scaling_ratio=scale):
+            yield frame_index, absolute_position, matchscore, scaled_frame, diff, mask
 
     logger.info("Starting video processing...")
     motiondetector = MotionDetector()
 
-    for frame_index, absolute_position, matchscore, frame in iterator():
+    for frame_index, absolute_position, matchscore, frame, diff, mask in iterator():
         # 中断チェック：新しいファイルがドロップされたら即座に終了する
         if (
             multiview_manager
@@ -81,6 +87,12 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
 
         if multiview_manager:
             multiview_manager.update_preview(frame)
+            if logger.getEffectiveLevel() <= INFO:
+                multiview_manager.update_diff(diff)
+                multiview_manager.update_mask(mask)
+            else:
+                # 非表示にする
+                multiview_manager.hide_verbose_previews()
 
         paths, dropped_paths, active_path_ids = motiondetector._detect(
             matchscore, frame_index=frame_index
@@ -287,6 +299,11 @@ def main():
                 logger.info("Ready for next drop.")
 
         manager.window.start_processing = start_processing
+
+        # メインウィンドウでもペースト（Ctrl+V / Cmd+V）をいつでも受け付けるように設定
+        # これにより DropArea が非表示の時（処理中など）でもペーストでファイルを変更できる
+        paste_shortcut = QShortcut(QKeySequence.StandardKey.Paste, manager.window)
+        paste_shortcut.activated.connect(drop_area.handle_paste)
 
     sys.exit(app.exec())
 
