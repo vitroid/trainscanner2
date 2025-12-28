@@ -11,17 +11,27 @@ from trainscanner2.video import video_cv2, image_dir
 import os
 
 
-def video_loader_factory(filename: str, every: int = 1):
+def video_loader_factory(
+    filename: str, every: int = 1, duplicate_threshold: float = 0.1
+):
     filename = filename.rstrip("/")
     if os.path.isdir(filename):
-        return image_dir.VideoLoader(filename)
+        return image_dir.VideoLoader(
+            filename, duplicate_threshold=duplicate_threshold
+        )
     ostype = sys.platform
     if ostype == "darwin":
-        return video_cv2.VideoLoader(filename, every=every)
+        return video_cv2.VideoLoader(
+            filename, every=every, duplicate_threshold=duplicate_threshold
+        )
     elif 0 == ostype.find("linux"):
-        return video_cv2.VideoLoader(filename, every=every)
+        return video_cv2.VideoLoader(
+            filename, every=every, duplicate_threshold=duplicate_threshold
+        )
     elif 0 == ostype.find("win"):
-        return video_cv2.VideoLoader(filename, every=every)
+        return video_cv2.VideoLoader(
+            filename, every=every, duplicate_threshold=duplicate_threshold
+        )
     else:
         raise ValueError(f"Unsupported platform: {ostype}")
 
