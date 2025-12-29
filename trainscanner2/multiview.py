@@ -50,9 +50,9 @@ class MultiViewWindow(QMainWindow):
         # ウィンドウタイトルをビデオファイル名のbasenameに設定
         if video_base:
             video_basename = os.path.basename(video_base)
-            self.setWindowTitle(f"Train Scanner - {video_basename}")
+            self.setWindowTitle(f"TrainScanner - {video_basename}")
         else:
-            self.setWindowTitle("Train Scanner - Multi View")
+            self.setWindowTitle("TrainScanner - Multi View")
         # スクリーンサイズに合わせて初期サイズを調整
         screen_geo = QApplication.primaryScreen().availableGeometry()
         # 横幅は最大1200、高さは画面高さの80%程度（最大800）に抑える
@@ -236,6 +236,10 @@ class MultiViewWindow(QMainWindow):
         # 3. 縦にstackしたパネルから削除
         self.panels_layout.removeWidget(path_widget)
 
+        # 明示的に非表示にし、親から切り離す
+        path_widget.hide()
+        path_widget.setParent(None)
+
         # ウィジェットを削除
         path_widget.deleteLater()
         del self.path_widgets[path_id]
@@ -329,9 +333,15 @@ class MultiViewWindow(QMainWindow):
         self.video_base = video_base
         if video_base:
             video_basename = os.path.basename(video_base)
-            self.setWindowTitle(f"Train Scanner - {video_basename}")
+            self.setWindowTitle(f"TrainScanner - {video_basename}")
         else:
-            self.setWindowTitle("Train Scanner - Multi View")
+            self.setWindowTitle("TrainScanner - Multi View")
+
+    def set_done(self):
+        """処理完了をタイトルに表示する"""
+        title = self.windowTitle()
+        if "Done" not in title:
+            self.setWindowTitle(f"{title} [Done]")
 
     def update_preview(self, cv_img):
         """プレビュー画像を更新"""
@@ -393,12 +403,31 @@ class MultiViewWindow(QMainWindow):
         for path_id in list(self.path_widgets.keys()):
             self.remove_path(path_id, reason="一括クリア")
 
+        # レイアウトに万が一残っているものがあれば、それも強制的に除去して非表示にする
+        while self.panels_layout.count() > 0:
+            item = self.panels_layout.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+                item.widget().setParent(None)
+                item.widget().deleteLater()
+
         # データのクリア（念のため）
         self.renderers.clear()
         self.active_path_ids.clear()
 
+        # プレビューなども初期化
+        if hasattr(self, "preview_label"):
+            self.preview_label.hide()
+        if hasattr(self, "diff_label"):
+            self.diff_label.hide()
+        if hasattr(self, "mask_label"):
+            self.mask_label.hide()
+
         # ウィンドウタイトルをリセット
-        self.setWindowTitle("Train Scanner - Multi View")
+        self.setWindowTitle("TrainScanner - Multi View")
+
+        # UIの更新を強制（削除を画面に反映させる）
+        QApplication.processEvents()
 
         # タイマーを再開
         self.update_timer.start(1000)
@@ -480,6 +509,8 @@ class MultiViewManager:
         """すべてのPathをクリア"""
         if self.window is not None:
             self.window.clear_all_paths()
+            # UIの更新を即座に反映させる
+            QApplication.processEvents()
 
     def update_preview(self, cv_img):
         """プレビューを更新"""
@@ -505,6 +536,11 @@ class MultiViewManager:
         """ビデオのベース名を設定"""
         if self.window is not None:
             self.window.set_video_base(video_base)
+
+    def set_done(self):
+        """処理完了を通知"""
+        if self.window is not None:
+            self.window.set_done()
 
     def add_path(self, path_id: int, render_one: object):
         """Pathを追加"""

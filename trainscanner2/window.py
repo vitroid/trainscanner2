@@ -86,9 +86,9 @@ class ImageWindow(QMainWindow):
         # ウィンドウタイトルをビデオファイル名のbasenameに設定
         if video_base:
             video_basename = os.path.basename(video_base)
-            self.setWindowTitle(f"Train Scanner - {video_basename} (ID: {window_id})")
+            self.setWindowTitle(f"TrainScanner - {video_basename} (ID: {window_id})")
         else:
-            self.setWindowTitle(f"Train Scanner - ID: {window_id}")
+            self.setWindowTitle(f"TrainScanner - ID: {window_id}")
 
         # 画像管理
         self.current_image = None  # 現在表示中の画像
@@ -298,11 +298,11 @@ class ImageWindow(QMainWindow):
         if self.video_base and self.video_base != "train_scan":
             video_basename = os.path.basename(self.video_base)
             self.setWindowTitle(
-                f"Train Scanner - {video_basename} (ID: {self.window_id}) [処理完了 - Score: {score:.3f}]"
+                f"TrainScanner - {video_basename} (ID: {self.window_id}) [Done - Score: {score:.3f}]"
             )
         else:
             self.setWindowTitle(
-                f"Train Scanner - ID: {self.window_id} [処理完了 - Score: {score:.3f}]"
+                f"TrainScanner - ID: {self.window_id} [Done - Score: {score:.3f}]"
             )
 
     def save_image(self):

@@ -106,7 +106,7 @@ def normalize(x):
     return (x - np.min(x)) / (np.max(x) - np.min(x))
 
 
-def analyze_iter(vl, scaling_ratio=1.0):
+def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     """
     動画を読み込んで、各フレームをずらして自分自身と重ねあわせ、そのスコア(2次元行列)を返す。
     """
@@ -116,7 +116,8 @@ def analyze_iter(vl, scaling_ratio=1.0):
     blurmask = BlurMask3()
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
-    antishaker = AntiShaker2(velocity=1)
+    if antishaker is None:
+        antishaker = AntiShaker2(velocity=1)
 
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()

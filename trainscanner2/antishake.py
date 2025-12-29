@@ -24,6 +24,14 @@ class AntiShaker2:
         self._last_frame = None
         self._velocity = velocity
 
+    @property
+    def abs_loc(self):
+        return self._absx, self._absy
+
+    @abs_loc.setter
+    def abs_loc(self, value):
+        self._absx, self._absy = value
+
     def add_frame(self, frame, mask):
         # subpixel matchingは要らないだろう。
         h, w = frame.shape[:2]

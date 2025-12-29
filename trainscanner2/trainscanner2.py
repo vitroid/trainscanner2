@@ -14,6 +14,7 @@ from PyQt6.QtCore import QTimer
 from trainscanner2.video import video_loader_factory
 from trainscanner2.analyze import analyze_iter
 from trainscanner2.detect import MotionDetector
+from trainscanner2.antishake import AntiShaker2
 from trainscanner2.render import Render
 from trainscanner2.droparea import DropAreaWidget
 
@@ -61,6 +62,8 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
             use_multiview=True,
         )
 
+    antishaker = AntiShaker2(velocity=1)
+
     def iterator():
         for (
             frame_index,
@@ -69,7 +72,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
             scaled_frame,
             diff,
             mask,
-        ) in analyze_iter(vl, scaling_ratio=scale):
+        ) in analyze_iter(vl, scaling_ratio=scale, antishaker=antishaker):
             yield frame_index, absolute_position, matchscore, scaled_frame, diff, mask
 
     logger.info("Starting video processing...")
@@ -98,6 +101,9 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
             matchscore, frame_index=frame_index
         )
 
+        if len(paths) == 0:
+            antishaker.abs_loc = (0, 0)
+
         for id, path in paths.items():
             renderer.put(
                 id, frame, path.history[-1], absolute_position=absolute_position
@@ -109,6 +115,9 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
 
         for path_id in dropped_paths:
             renderer.mark_inactive(id=path_id)
+
+    if multiview_manager:
+        multiview_manager.set_done()
 
     all_detected_paths = dict(motiondetector.paths)
     for path_id, history in motiondetector.done():
