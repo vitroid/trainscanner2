@@ -97,11 +97,10 @@ class AntiShaker3:
             self._reference_imagerect, frame_imagerect, self._velocity
         )
         matchrect.validate()
-        (driftx, drifty), _ = matchrect.peak(subpixel=False)
-        # print(dx, dy)
+        (driftx, drifty), _ = matchrect.peak(subpixel=True)
 
-        self._last_driftx += driftx
-        self._last_drifty += drifty
+        self._last_driftx += int(np.floor(driftx + 0.5))
+        self._last_drifty += int(np.floor(drifty + 0.5))
 
         return (
             shift(frame, self._last_driftx, self._last_drifty),
@@ -110,7 +109,7 @@ class AntiShaker3:
 
 
 if __name__ == "__main__":
-    antishaker = AntiShaker3(velocity=10)
+    antishaker = AntiShaker3(velocity=2)
     # 動画を読み込む
     if len(sys.argv) < 2:
         videofile = "examples/sample3.mov"
@@ -129,7 +128,6 @@ if __name__ == "__main__":
             break
         frame = cv2.resize(frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
         frame, abs_loc = antishaker.add_frame(frame)
-        print(abs_loc)
         cv2.imshow("frame", frame)
         cv2.imshow("diff", standardize(frame) - antishaker._reference_imagerect.image)
         cv2.waitKey(1)
