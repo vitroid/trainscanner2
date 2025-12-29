@@ -101,9 +101,12 @@ class Render_one:
         if self.canvas is None:
             self.canvas = ImageStrips(cache=self.cache)
 
-        delta = h.xy
-        self.logger.debug(f"{id=} {delta=} ")
-        dx, dy = delta
+        velocity = h.xy
+        self.logger.debug(f"{id=} {velocity=} ")
+        dx, dy = velocity
+        # hopはdropped frameによる飛び
+        dx *= h.hop
+        dy *= h.hop
         dd = (dx**2 + dy**2) ** 0.5
         if dd != 0:
             self.train_position += dd
@@ -371,7 +374,7 @@ class Render:
         self.multiview_manager = None
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
         self.video_path = video_path  # 動画ファイルパス
-        self.video_base = video_base # 保存時のベース名
+        self.video_base = video_base  # 保存時のベース名
 
         if use_pyqt:
             # 動画ファイルパスからベース名を取得
@@ -604,9 +607,7 @@ class Render:
             return
 
         threshold = self.max_score * score_ratio
-        self.logger.debug(
-            f"Threshold: {threshold=} {self.max_score=} {score_ratio=}"
-        )
+        self.logger.debug(f"Threshold: {threshold=} {self.max_score=} {score_ratio=}")
         to_close = []
 
         # 閉じるウィンドウをリストアップ（辞書のコピーを作成してからイテレート）

@@ -9,7 +9,7 @@ import pykalman
 from pyperbox import Rect
 from trainscanner2.image import MatchRect, ImageRect
 from trainscanner2 import PathItem
-
+from collections import defaultdict
 
 USE_KALMAN = False  # カルマンフィルタを有効にする場合はTrueにする
 
@@ -48,7 +48,12 @@ class Path:
 
     # 実測値を記録する。
     def update(
-        self, frame_index: int, xy: tuple[float, float], value: float, missed=False
+        self,
+        frame_index: int,
+        xy: tuple[float, float],
+        value: float,
+        hop: int = 1,
+        missed=False,
     ):
         if USE_KALMAN:
             new_mean, new_covariance = self.kf.filter_update(
@@ -59,7 +64,9 @@ class Path:
         else:
             self.mean = np.array(xy)
 
-        self.history.append(PathItem(frame_index=frame_index, xy=xy, value=value))
+        self.history.append(
+            PathItem(frame_index=frame_index, xy=xy, value=value, hop=hop)
+        )
         if missed:
             self.missed_duration += 1
         else:
@@ -75,10 +82,19 @@ class Path:
         return self.missed_duration
 
     # 軌道に一番近い点と、それとの距離を返す。
-    def closest(self, xy):
-        # 速度変動の許容範囲
+    def closest_index(self, xy):
+        # このpath(あるいはその2、3倍)がxyのいずれに近いかを返す。
+        # xyはmaximaのarray.
+        # 複数が適合する場合はどうするの?ts2のコンセプトからいえば、2つが一致するなら分岐する。
+        # このやりかたはうまくない。
+        # d = np.linalg.norm(self.predicted - xy, axis=1)
+        # d2 = np.linalg.norm(2 * self.predicted - xy, axis=1)
+        # d3 = np.linalg.norm(3 * self.predicted - xy, axis=1)
+        # d4 = np.linalg.norm(4 * self.predicted - xy, axis=1)
+        # d = np.array([d, d2, d3, d4])
+        # return np.argmin(d), np.min(d)
         d = np.linalg.norm(self.predicted - xy, axis=1)
-        return xy[np.argmin(d)], np.min(d)
+        return np.argmin(d), np.min(d)
 
 
 class MotionDetector:
@@ -108,7 +124,7 @@ class MotionDetector:
         plot: bool = False,
         max_miss: int = 10,
         min_score: float = 0.2,
-        num_peaks: int = 3,
+        num_peaks: int = 5,
         velocity_uncertainty: float = 0.05,
     ):
         # self.pathsに直前までのピーク位置の履歴が保存されていて、
@@ -135,59 +151,64 @@ class MotionDetector:
         # if self.logger.getEffectiveLevel() == DEBUG:
         #     matchrect.plot(label=f"{frame_index=}")
 
-        self.log[frame_index] = dict()
+        self.log[frame_index] = defaultdict(str)
         this_log = self.log[frame_index]
 
-        maxima = [
-            ((float(x), float(y)), value)
-            for (x, y), value in sorted(
-                matchrect.peaks(height=min_score, subpixel=True),
-                key=lambda x: x[1],
-                reverse=True,
-            )
-            if np.floor(x + 0.5) != 0.0 or np.floor(y + 0.5) != 0.0
-        ][:num_peaks]
+        maxima_xy = []
+        maxima_score = []
+        for (x, y), score in sorted(
+            matchrect.peaks(height=min_score, subpixel=True),
+            key=lambda x: x[1],
+            reverse=True,
+        ):
+            if np.floor(x + 0.5) != 0.0 or np.floor(y + 0.5) != 0.0:
+                maxima_xy.append((float(x), float(y)))
+                maxima_score.append(score)
 
-        maxima = dict(maxima)
+        maxima_xy_array = np.array(maxima_xy[:num_peaks])
+        maxima_score = maxima_score[:num_peaks]
+        len_maxima = len(maxima_score)
 
-        # top 3 peaksにマークする。
-        for xy, value in maxima.items():
-            this_log[xy] = f"top3:{value};"
-
-        maxima_list = np.array(list(maxima.keys()))
-        self.logger.info(f"maxima")
-        for xy, value in maxima.items():
-            self.logger.info(f"{xy=} {value=}")
-
-        unassigned_maxima = {tuple(xy) for xy in maxima_list}
+        unassigned_maxima = set(list(range(len_maxima)))
+        print(unassigned_maxima)
         missed_paths = set(self.paths.keys())
         dropped_paths = set()
 
         self.logger.debug(f"{self.paths.keys()=}")
 
-        if len(maxima_list) > 0:
+        if len_maxima > 0:
             # 追跡中の各pathについて
             # 辞書のコピーを作成してからイテレート（競合状態を回避）
             for path_label in list(self.paths.keys()):
-                xy, d = self.paths[path_label].closest(maxima_list)
-                L = np.linalg.norm(xy)
+                index, deviation = self.paths[path_label].closest_index(maxima_xy_array)
+                # maxima_index, hop = int(index % len_maxima), index // len_maxima
+                # hop += 1
+                maxima_index = index
+                hop = 1
+                # hopは、dropframeがない場合は1、ある場合は2か3
+                velocity = maxima_xy_array[maxima_index] / hop
+
+                L = np.linalg.norm(velocity)
                 threshold = L * velocity_uncertainty
                 # これを大きめにしておかないと、分断されてしまうことがある。
-                if threshold < 2.5:
+                if threshold < 2.5:  # pixels
                     threshold = 2.5
                 # 一番近い極大がmax_shake以内にあれば (てぶれ等による多少のずれは許容する)
-                if xy is not None and d <= threshold:
-                    xy = tuple(xy)
+                if velocity is not None and deviation <= threshold:
+                    velocity = tuple(velocity)
                     # pathを更新する。
                     self.paths[path_label].update(
-                        frame_index=frame_index, xy=xy, value=maxima[xy]
+                        frame_index=frame_index,
+                        xy=velocity,
+                        value=maxima_score[maxima_index],
+                        hop=hop,
                     )
                     # 極大は割当て済み
-                    unassigned_maxima -= {xy}
+                    unassigned_maxima -= {maxima_index}
                     # パスも割当て済み
                     missed_paths -= {path_label}
 
-                    this_log[xy] += f"assigned:{path_label};"
+                    this_log[maxima_xy[maxima_index]] += f"assigned:{path_label};"
 
         # まだ極大がみつかっていないパスについては、
         for path_label in missed_paths:
@@ -210,16 +231,16 @@ class MotionDetector:
                 dropped_paths.add(path_label)
 
         # 野良極大
-        for xy in unassigned_maxima:
-            xy = tuple(xy)
+        for maxima_index in unassigned_maxima:
             # 新しいパスを開始する
+            print(maxima_index)
             self.paths[self.next_label] = Path(
                 frame_index=frame_index,
-                xy=xy,
-                value=maxima[xy],
+                xy=maxima_xy[maxima_index],
+                value=maxima_score[maxima_index],
                 id=self.next_label,
             )
-            this_log[xy] += f"new:{self.next_label};"
+            this_log[maxima_xy[maxima_index]] = f"new:{self.next_label};"
             self.next_label += 1
 
         # パスの合流を監視する。

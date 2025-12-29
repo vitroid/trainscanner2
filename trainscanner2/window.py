@@ -43,7 +43,7 @@ def cv2_to_qpixmap(cv_img):
         rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         q_img = QImage(
             rgb_img.data, width, height, bytes_per_line, QImage.Format.Format_RGB888
-        ).copy() # ここでコピーを取るのがクラッシュ防止に重要
+        ).copy()  # ここでコピーを取るのがクラッシュ防止に重要
         return QPixmap.fromImage(q_img)
     except Exception:
         return None

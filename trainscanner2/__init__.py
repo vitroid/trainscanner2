@@ -10,6 +10,7 @@ class PathItem:
     frame_index: int
     xy: tuple[float, float]
     value: list
+    hop: int = 1
 
 
 class FIFO:
@@ -42,6 +43,4 @@ def std_hdr(image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         raise ValueError(f"Invalid image shape: {image.shape}")
-    return standardize(
-        np.log(gray.astype(np.float32) + 1)
-    )
+    return standardize(np.log(gray.astype(np.float32) + 1))
