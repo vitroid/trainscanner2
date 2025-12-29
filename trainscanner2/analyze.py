@@ -112,9 +112,6 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     """
     logger = getLogger(__name__)
 
-    # diff画像をたくわえ、動きの大きい領域を検出する。
-    blurmask = BlurMask3()
-
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
     if antishaker is None:
         antishaker = AntiShaker2(velocity=1)
@@ -127,8 +124,9 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     unblurred_scaled_frame_history = FIFO(estimate)
     unblurred_scaled_frames.append(raw_frame)
     unblurred_scaled_frame_history.append(raw_frame)
+    antimask = np.ones(raw_frame.shape[:2])
 
-    mask = np.ones(unblurred_scaled_frames.queue[0].shape[:2], dtype=np.float32)
+    # mask = np.ones(unblurred_scaled_frames.queue[0].shape[:2], dtype=np.float32)
 
     while True:
         frame_index = vl.head
@@ -140,14 +138,6 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
         del raw_frame
 
         height, width = scaled_frame.shape[:2]
-
-        # antimask = np.exp(-mask)
-        if np.max(mask) == np.min(mask):
-            # 全部1にする。
-            antimask = np.ones_like(mask)
-        else:
-            # normalizeは値の範囲を0〜1間におさめる
-            antimask = 1 - normalize(mask)
 
         # 直前のフレームからの変位deltaを測定し、積算してフレームごとの絶対位置abs_locを求める。
         # unblurred_scaled_frameは位置あわせしたあとのフレーム。以後の処理はこれを基準とする。
@@ -174,23 +164,17 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
         base_frame = unblurred_scaled_frames.queue[0]
         next_frame = unblurred_scaled_frames.queue[1]
 
-        antimasked_hdr_base = std_hdr(base_frame) * antimask
-        antimasked_hdr_next = std_hdr(next_frame) * antimask
+        hdr_base = std_hdr(base_frame)
+        hdr_next = std_hdr(next_frame)
 
         # diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
         # blurmaskに追加する。maskは平均化されたマスク
         # mask = blurmask.add_frame(diff)
-        diff, mask = blurmask.add_frame(antimasked_hdr_next)
-
-        # maskは、diffの値が大きいピクセル。
-        logger.debug(f"mask {np.min(mask)}, {np.max(mask)}")
-        mask_view = mask.copy()
-        mask_view -= np.min(mask_view)
 
         # 平均背景をさしひいて、前景を強調する。
         # 今はマスクを使っていない。
-        base_masked = antimasked_hdr_base.copy() - hdr_avg  # * mask
-        next_masked = antimasked_hdr_next.copy() - hdr_avg  # * mask
+        base_masked = hdr_base.copy() - hdr_avg  # * mask
+        next_masked = hdr_next.copy() - hdr_avg  # * mask
 
         # こんどは移動量をたっぷりとる。
         max_shift = 100
@@ -210,7 +194,7 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
         # match_rectはrect付き行列。
         matchrect = match_rect(base_imagerect, next_imagerect)
 
-        yield frame_index, abs_loc, matchrect, unblurred_scaled_frame, diff, mask
+        yield frame_index, abs_loc, matchrect, unblurred_scaled_frame
 
 
 def main():
@@ -260,7 +244,7 @@ def main():
         vl.seek(47 * 30)
 
     with Storer("motions_test.json") as storer:
-        for frame_index, absolute_position, matchrect, _, _, _ in analyze_iter(
+        for frame_index, absolute_position, matchrect, _ in analyze_iter(
             vl, scaling_ratio=scale
         ):
             storer.append(frame_index, absolute_position, matchrect)

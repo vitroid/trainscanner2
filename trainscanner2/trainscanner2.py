@@ -70,15 +70,13 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
             absolute_position,
             matchscore,
             scaled_frame,
-            diff,
-            mask,
         ) in analyze_iter(vl, scaling_ratio=scale, antishaker=antishaker):
-            yield frame_index, absolute_position, matchscore, scaled_frame, diff, mask
+            yield frame_index, absolute_position, matchscore, scaled_frame
 
     logger.info("Starting video processing...")
     motiondetector = MotionDetector()
 
-    for frame_index, absolute_position, matchscore, frame, diff, mask in iterator():
+    for frame_index, absolute_position, matchscore, frame in iterator():
         # 中断チェック：新しいファイルがドロップされたら即座に終了する
         if (
             multiview_manager
@@ -91,8 +89,6 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
         if multiview_manager:
             multiview_manager.update_preview(frame)
             if logger.getEffectiveLevel() <= INFO:
-                multiview_manager.update_diff(diff)
-                multiview_manager.update_mask(mask)
                 multiview_manager.update_plot(matchscore.plot_image())
             else:
                 # 非表示にする

@@ -41,12 +41,13 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     unblurred_frames = FIFO(2)
     unblurred_frame_history = FIFO(5)
     # diff画像をたくわえ、動きの大きい領域を検出する。
-    blurmask = BlurMask(lifetime=20)
+    # blurmask = BlurMask(lifetime=20)
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
     antishaker = AntiShaker2(velocity=magnify)
     damping = 0.05
     dumped = None
+    antimask = None
 
     mask = None
 
@@ -74,14 +75,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
 
         height, width = raw_frame.shape[:2]
 
-        if mask is None:
-            mask = np.zeros(raw_frame.shape[:2], dtype=np.float32)
-        if np.max(mask) == np.min(mask):
-            # 全部1にする。
-            antimask = np.ones_like(mask)
-        else:
-            # normalizeは値の範囲を0〜1間におさめる
-            antimask = 1 - normalize(mask)
+        if antimask is None:
+            antimask = np.zeros(raw_frame.shape[:2], dtype=np.float32)
 
         # 直前のフレームからの変位deltaを測定し、積算してフレームごとの絶対位置abs_locを求める。
         # unblurred_scaled_frameは位置あわせしたあとのフレーム。以後の処理はこれを基準とする。
@@ -104,22 +99,22 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         base_frame = unblurred_frames.queue[0]
         next_frame = unblurred_frames.queue[1]
 
-        antimasked_hdr_base = std_hdr(base_frame) * antimask
-        antimasked_hdr_next = std_hdr(next_frame) * antimask
+        hdr_base = std_hdr(base_frame)
+        hdr_next = std_hdr(next_frame)
 
         # 二乗差分画像を作る
-        diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
-        # blurmaskに追加する。maskは平均化されたマスク
-        mask = blurmask.add_frame(diff)
+        # diff = (hdr_base - hdr_next) ** 2
+        # # blurmaskに追加する。maskは平均化されたマスク
+        # mask = blurmask.add_frame(diff)
 
-        # maskは、diffの値が大きいピクセル。
-        logger.debug(f"mask {np.min(mask)}, {np.max(mask)}")
-        mask += np.min(mask)
+        # # maskは、diffの値が大きいピクセル。
+        # logger.debug(f"mask {np.min(mask)}, {np.max(mask)}")
+        # mask += np.min(mask)
 
         # 平均背景をさしひいて、前景を強調する。
         # 今はマスクを使っていない。
-        base_masked = antimasked_hdr_base.copy() - hdr_avg  # * mask
-        next_masked = antimasked_hdr_next.copy() - hdr_avg  # * mask
+        base_masked = hdr_base.copy() - hdr_avg
+        next_masked = hdr_next.copy() - hdr_avg
 
         # 照合する幅は、delta*magnifyの周囲±magnify
         max_shift = int(magnify)

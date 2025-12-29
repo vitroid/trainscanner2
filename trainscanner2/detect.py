@@ -232,7 +232,6 @@ class MotionDetector:
         # 野良極大
         for maxima_index in unassigned_maxima:
             # 新しいパスを開始する
-            print(maxima_index)
             self.paths[self.next_label] = Path(
                 frame_index=frame_index,
                 xy=maxima_xy[maxima_index],

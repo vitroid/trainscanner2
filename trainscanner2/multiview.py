@@ -96,8 +96,6 @@ class MultiViewWindow(QMainWindow):
 
         # プレビュー表示用ラベル（右下にフローティング）
         self.preview_label = self._create_pip_label("previewLabel")
-        self.diff_label = self._create_pip_label("diffLabel")
-        self.mask_label = self._create_pip_label("maskLabel")
         self.plot_label = self._create_pip_label("plotLabel")
 
         # キーボードショートカット
@@ -309,35 +307,14 @@ class MultiViewWindow(QMainWindow):
                 self.width() - self.preview_label.width() - margin,
                 self.height() - self.preview_label.height() - margin,
             )
-        # Previewの上にDiff
-        if hasattr(self, "diff_label"):
-            self.diff_label.move(
-                self.width() - self.diff_label.width() - margin,
-                self.height()
-                - self.preview_label.height()
-                - self.diff_label.height()
-                - 2 * margin,
-            )
-        # Diffの上にMask
-        if hasattr(self, "mask_label"):
-            self.mask_label.move(
-                self.width() - self.mask_label.width() - margin,
-                self.height()
-                - self.preview_label.height()
-                - self.diff_label.height()
-                - self.mask_label.height()
-                - 3 * margin,
-            )
         # Maskの上にPlot
         if hasattr(self, "plot_label"):
             self.plot_label.move(
                 self.width() - self.plot_label.width() - margin,
                 self.height()
                 - self.preview_label.height()
-                - self.diff_label.height()
-                - self.mask_label.height()
                 - self.plot_label.height()
-                - 4 * margin,
+                - 2 * margin,
             )
 
     def set_video_base(self, video_base: str):
@@ -359,24 +336,12 @@ class MultiViewWindow(QMainWindow):
         """プレビュー画像を更新"""
         self._update_pip(self.preview_label, cv_img)
 
-    def update_diff(self, cv_img):
-        """Diff画像を更新"""
-        self._update_pip(self.diff_label, cv_img)
-
-    def update_mask(self, cv_img):
-        """Mask画像を更新"""
-        self._update_pip(self.mask_label, cv_img)
-
     def update_plot(self, cv_img):
         """Plot画像を更新"""
         self._update_pip(self.plot_label, cv_img)
 
     def hide_verbose_previews(self):
         """DiffとMaskを隠す"""
-        if hasattr(self, "diff_label"):
-            self.diff_label.hide()
-        if hasattr(self, "mask_label"):
-            self.mask_label.hide()
         if hasattr(self, "plot_label"):
             self.plot_label.hide()
 
@@ -436,10 +401,6 @@ class MultiViewWindow(QMainWindow):
         # プレビューなども初期化
         if hasattr(self, "preview_label"):
             self.preview_label.hide()
-        if hasattr(self, "diff_label"):
-            self.diff_label.hide()
-        if hasattr(self, "mask_label"):
-            self.mask_label.hide()
         if hasattr(self, "plot_label"):
             self.plot_label.hide()
 
