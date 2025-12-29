@@ -170,7 +170,6 @@ class MotionDetector:
         len_maxima = len(maxima_score)
 
         unassigned_maxima = set(list(range(len_maxima)))
-        print(unassigned_maxima)
         missed_paths = set(self.paths.keys())
         dropped_paths = set()
 
