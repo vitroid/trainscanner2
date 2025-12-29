@@ -16,7 +16,7 @@ from trainscanner2.image import match_rect, diffImage, ImageRect
 from trainscanner2.video import video_loader_factory
 from trainscanner2 import FIFO, std_hdr
 from trainscanner2.analyze import normalize, BlurMask
-from trainscanner2.antishake import AntiShaker2
+from trainscanner2.antishake import AntiShaker3
 from trainscanner2.render import PathItem, WindowManager
 
 # DEBUG表示を有効にするかどうか（環境変数で制御）
@@ -44,7 +44,7 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     # blurmask = BlurMask(lifetime=20)
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
-    antishaker = AntiShaker2(velocity=magnify)
+    antishaker = AntiShaker3(velocity=magnify)
     damping = 0.05
     dumped = None
 
@@ -76,7 +76,7 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
 
         # 直前のフレームからの変位deltaを測定し、積算してフレームごとの絶対位置abs_locを求める。
         # unblurred_scaled_frameは位置あわせしたあとのフレーム。以後の処理はこれを基準とする。
-        unblurred_frame, delta, abs_loc = antishaker.add_frame(raw_frame)
+        unblurred_frame, abs_loc = antishaker.add_frame(raw_frame)
 
         # unblurred_scaled_framesにはてぶれを修正し,最初のフレームの位置に背景がそろえられた画像が入る。
         unblurred_frames.append(unblurred_frame)

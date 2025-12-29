@@ -9,7 +9,7 @@ from pyperbox import Rect
 from trainscanner2.image import match_rect, MatchRect, ImageRect
 from trainscanner2.video import video_loader_factory
 from trainscanner2 import FIFO, std_hdr
-from trainscanner2.antishake import AntiShaker2
+from trainscanner2.antishake import AntiShaker3
 
 
 # フレーム間の二乗差分を時間平均して、動きの大きい部分を抽出する。
@@ -106,15 +106,13 @@ def normalize(x):
     return (x - np.min(x)) / (np.max(x) - np.min(x))
 
 
-def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
+def analyze_iter(vl, antishaker, scaling_ratio=1.0):
     """
     動画を読み込んで、各フレームをずらして自分自身と重ねあわせ、そのスコア(2次元行列)を返す。
     """
     logger = getLogger(__name__)
 
     # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
-    if antishaker is None:
-        antishaker = AntiShaker2(velocity=1)
 
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()
@@ -125,7 +123,8 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     unblurred_scaled_frames.append(raw_frame)
     unblurred_scaled_frame_history.append(raw_frame)
 
-    # mask = np.ones(unblurred_scaled_frames.queue[0].shape[:2], dtype=np.float32)
+    reference_frame = raw_frame
+    antishaker.reset(raw_frame)
 
     while True:
         frame_index = vl.head
@@ -140,13 +139,13 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
 
         # 直前のフレームからの変位deltaを測定し、積算してフレームごとの絶対位置abs_locを求める。
         # unblurred_scaled_frameは位置あわせしたあとのフレーム。以後の処理はこれを基準とする。
-        unblurred_scaled_frame, delta, abs_loc = antishaker.add_frame(scaled_frame)
+        unblurred_scaled_frame, abs_loc = antishaker.add_frame(scaled_frame)
 
         # unblurred_scaled_framesにはてぶれを修正し,最初のフレームの位置に背景がそろえられた画像が入る。
         unblurred_scaled_frames.append(unblurred_scaled_frame)
         unblurred_scaled_frame_history.append(unblurred_scaled_frame)
 
-        logger.debug(f"{frame_index=} {delta=} {abs_loc=}")
+        logger.debug(f"{frame_index=} {abs_loc=}")
 
         # 平均画像=背景
         averaged_background = np.zeros_like(

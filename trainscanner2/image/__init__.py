@@ -134,6 +134,12 @@ class MatchRect:
                     return self.coord(x + result["x"], y + result["y"]), result["z"]
             return self.coord(x, y), maxval
 
+    def validate(self):
+        if (self.rect.height, self.rect.width) != self.value.shape:
+            raise ValueError(
+                f"value shape {self.value.shape} does not match rect shape {self.rect.height}x{self.rect.width}"
+            )
+
     def peak(self, subpixel=False):
         if subpixel:
             return self._peak_subpixel()
@@ -338,6 +344,23 @@ def match_rect(target: ImageRect, focus: ImageRect) -> MatchRect:
         target.bottom - focus.bottom + 1,
     )
     return MatchRect(value=scores, rect=rect)
+
+
+def match_rect_expanded(target: ImageRect, focus: ImageRect, margin: int) -> MatchRect:
+    expanded_target = np.zeros(
+        (target.height + 2 * margin, target.width + 2 * margin), dtype=np.float32
+    )
+    expanded_target[margin:-margin, margin:-margin] = target.image
+    scores = cv2.matchTemplate(expanded_target, focus.image, cv2.TM_CCOEFF_NORMED)
+    return MatchRect(
+        value=scores,
+        rect=Rect.from_bounds(
+            target.left - focus.left - margin,
+            target.right - focus.right + 1 + margin,
+            target.top - focus.top - margin,
+            target.bottom - focus.bottom + 1 + margin,
+        ),
+    )
 
 
 def standardize(frame):

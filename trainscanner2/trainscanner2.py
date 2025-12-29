@@ -6,6 +6,7 @@ import tempfile
 import yt_dlp
 from logging import getLogger, INFO, DEBUG, WARNING, basicConfig
 from tqdm import tqdm
+import cv2
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QShortcut, QKeySequence
@@ -14,7 +15,7 @@ from PyQt6.QtCore import QTimer
 from trainscanner2.video import video_loader_factory
 from trainscanner2.analyze import analyze_iter
 from trainscanner2.detect import MotionDetector
-from trainscanner2.antishake import AntiShaker2
+from trainscanner2.antishake import AntiShaker3
 from trainscanner2.render import Render
 from trainscanner2.droparea import DropAreaWidget
 
@@ -41,6 +42,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
     if scale > 1.0:
         scale = 1.0
 
+    scaled_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
     # 既存のMultiViewManagerがある場合は、それを使用
     if multiview_manager is not None:
         multiview_manager.clear_all_paths()
@@ -62,7 +64,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
             use_multiview=True,
         )
 
-    antishaker = AntiShaker2(velocity=1)
+    antishaker = AntiShaker3(velocity=1, reference_frame=scaled_frame)
 
     def iterator():
         for (
@@ -99,7 +101,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
         )
 
         if len(paths) == 0:
-            antishaker.abs_loc = (0, 0)
+            antishaker.reset(frame)
 
         for id, path in paths.items():
             renderer.put(

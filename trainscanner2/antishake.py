@@ -67,8 +67,50 @@ class AntiShaker2:
         return shift(frame, self._absx, self._absy), (dx, dy), (self._absx, self._absy)
 
 
+from trainscanner2.image import ImageRect, match_rect_expanded
+
+
+class AntiShaker3:
+    # 直前のフレームとの差を返しつつ、変位の総量(最初のフレームからの累積変位)を記憶しておく。
+    def __init__(self, velocity=1, reference_frame=None):
+        self._velocity = velocity
+        if reference_frame is not None:
+            self.reset(reference_frame)
+        else:
+            self._reference_imagerect = None
+
+    def reset(self, frame):
+        self._last_driftx = 0
+        self._last_drifty = 0
+        self._reference_imagerect = ImageRect(image=standardize(frame))
+
+    def add_frame(self, frame, mask=None):
+        if self._reference_imagerect is None:
+            self.reset(frame)
+        # subpixel matchingは要らないだろう。
+        h, w = frame.shape[:2]
+        frame_std = standardize(frame)
+        frame_imagerect = ImageRect(
+            image=shift(frame_std, self._last_driftx, self._last_drifty)
+        )
+        matchrect = match_rect_expanded(
+            self._reference_imagerect, frame_imagerect, self._velocity
+        )
+        matchrect.validate()
+        (driftx, drifty), _ = matchrect.peak(subpixel=False)
+        # print(dx, dy)
+
+        self._last_driftx += driftx
+        self._last_drifty += drifty
+
+        return (
+            shift(frame, self._last_driftx, self._last_drifty),
+            (self._last_driftx, self._last_drifty),
+        )
+
+
 if __name__ == "__main__":
-    antishaker = AntiShaker2()
+    antishaker = AntiShaker3(velocity=10)
     # 動画を読み込む
     if len(sys.argv) < 2:
         videofile = "examples/sample3.mov"
@@ -86,8 +128,8 @@ if __name__ == "__main__":
         if not ret:
             break
         frame = cv2.resize(frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
-        frame, delta, abs_loc = antishaker.add_frame(
-            frame, np.ones(frame.shape[:2], dtype=np.float32)
-        )
+        frame, abs_loc = antishaker.add_frame(frame)
+        print(abs_loc)
         cv2.imshow("frame", frame)
+        cv2.imshow("diff", standardize(frame) - antishaker._reference_imagerect.image)
         cv2.waitKey(1)
