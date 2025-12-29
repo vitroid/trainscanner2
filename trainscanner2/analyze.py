@@ -124,7 +124,6 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     unblurred_scaled_frame_history = FIFO(estimate)
     unblurred_scaled_frames.append(raw_frame)
     unblurred_scaled_frame_history.append(raw_frame)
-    antimask = np.ones(raw_frame.shape[:2])
 
     # mask = np.ones(unblurred_scaled_frames.queue[0].shape[:2], dtype=np.float32)
 
@@ -141,9 +140,7 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
 
         # 直前のフレームからの変位deltaを測定し、積算してフレームごとの絶対位置abs_locを求める。
         # unblurred_scaled_frameは位置あわせしたあとのフレーム。以後の処理はこれを基準とする。
-        unblurred_scaled_frame, delta, abs_loc = antishaker.add_frame(
-            scaled_frame, antimask
-        )
+        unblurred_scaled_frame, delta, abs_loc = antishaker.add_frame(scaled_frame)
 
         # unblurred_scaled_framesにはてぶれを修正し,最初のフレームの位置に背景がそろえられた画像が入る。
         unblurred_scaled_frames.append(unblurred_scaled_frame)

@@ -32,7 +32,7 @@ class AntiShaker2:
     def abs_loc(self, value):
         self._absx, self._absy = value
 
-    def add_frame(self, frame, mask):
+    def add_frame(self, frame, mask=None):
         # subpixel matchingは要らないだろう。
         h, w = frame.shape[:2]
         frame_std = standardize(frame)
@@ -48,7 +48,12 @@ class AntiShaker2:
             self._velocity : -self._velocity, self._velocity : -self._velocity
         ] = self._last_frame
         # frame_std と mask を明示的にfloat32に変換してから掛け算
-        template = np.multiply(frame_std.astype(np.float32), mask.astype(np.float32))
+        if mask is None:
+            template = frame_std.astype(np.float32)
+        else:
+            template = np.multiply(
+                frame_std.astype(np.float32), mask.astype(np.float32)
+            )
         # antishakeでは、整数未満の変位は無視する。精密照合はdetectにまかせる。
         scores = cv2.matchTemplate(frame0_extend, template, cv2.TM_CCORR_NORMED)
         _, _, _, max_loc = cv2.minMaxLoc(scores)
