@@ -161,6 +161,36 @@ class MatchRect:
     def coord(self, x: float, y: float):
         return x + self.rect.left, y + self.rect.top
 
+    def plot_image(self):
+        """
+        スコア行列を表示用の画像に変換する。
+        """
+        # 値を0-1に正規化（表示用）
+        v_min = np.min(self.value)
+        v_max = np.max(self.value)
+        if v_max > v_min:
+            normalized = (self.value - v_min) / (v_max - v_min)
+        else:
+            normalized = np.zeros_like(self.value)
+
+        display_img = (normalized * 255).astype(np.uint8)
+        # 必要に応じて拡大表示
+        h, w = display_img.shape[:2]
+        if w < 200 or h < 200:
+            scale = max(200 // w, 200 // h)
+            display_img = cv2.resize(
+                display_img, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST
+            )
+        return display_img
+
+    def plot(self, label: str = ""):
+        """
+        スコア行列をデバッグ表示する。
+        """
+        display_img = self.plot_image()
+        cv2.imshow(f"MatchRect: {label}", display_img)
+        cv2.waitKey(1)
+
 
 class ImageRect:
     """絶対座標付きの画像。"""

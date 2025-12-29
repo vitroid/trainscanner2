@@ -132,8 +132,8 @@ class MotionDetector:
         #         reverse=True,
         #     )[:num_peaks]
         # }
-        if self.logger.getEffectiveLevel() == DEBUG:
-            matchrect.plot(label=f"{frame_index=}")
+        # if self.logger.getEffectiveLevel() == DEBUG:
+        #     matchrect.plot(label=f"{frame_index=}")
 
         self.log[frame_index] = dict()
         this_log = self.log[frame_index]
@@ -269,8 +269,8 @@ class MotionDetector:
                 f"{path_label=}: {self.paths[path_label].missed_duration=} {[h.xy for h in self.paths[path_label].history]}"
             )
         self.logger.debug("")
-        if plot:
-            matchrect.plot(label=f"{frame_index=}")
+        # if plot:
+        #     matchrect.plot(label=f"{frame_index=}")
 
         active_paths = tuple(sorted(self.paths.keys()))
         return dict(self.paths), dropped_paths, active_paths

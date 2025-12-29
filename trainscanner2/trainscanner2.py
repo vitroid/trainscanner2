@@ -93,6 +93,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
             if logger.getEffectiveLevel() <= INFO:
                 multiview_manager.update_diff(diff)
                 multiview_manager.update_mask(mask)
+                multiview_manager.update_plot(matchscore.plot_image())
             else:
                 # 非表示にする
                 multiview_manager.hide_verbose_previews()

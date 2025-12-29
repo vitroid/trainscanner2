@@ -98,6 +98,7 @@ class MultiViewWindow(QMainWindow):
         self.preview_label = self._create_pip_label("previewLabel")
         self.diff_label = self._create_pip_label("diffLabel")
         self.mask_label = self._create_pip_label("maskLabel")
+        self.plot_label = self._create_pip_label("plotLabel")
 
         # キーボードショートカット
         close_shortcut = QShortcut(QKeySequence.StandardKey.Close, self)
@@ -327,6 +328,17 @@ class MultiViewWindow(QMainWindow):
                 - self.mask_label.height()
                 - 3 * margin,
             )
+        # Maskの上にPlot
+        if hasattr(self, "plot_label"):
+            self.plot_label.move(
+                self.width() - self.plot_label.width() - margin,
+                self.height()
+                - self.preview_label.height()
+                - self.diff_label.height()
+                - self.mask_label.height()
+                - self.plot_label.height()
+                - 4 * margin,
+            )
 
     def set_video_base(self, video_base: str):
         """ビデオのベース名を設定し、タイトルを更新する"""
@@ -355,12 +367,18 @@ class MultiViewWindow(QMainWindow):
         """Mask画像を更新"""
         self._update_pip(self.mask_label, cv_img)
 
+    def update_plot(self, cv_img):
+        """Plot画像を更新"""
+        self._update_pip(self.plot_label, cv_img)
+
     def hide_verbose_previews(self):
         """DiffとMaskを隠す"""
         if hasattr(self, "diff_label"):
             self.diff_label.hide()
         if hasattr(self, "mask_label"):
             self.mask_label.hide()
+        if hasattr(self, "plot_label"):
+            self.plot_label.hide()
 
     def _update_pip(self, label, cv_img):
         if cv_img is None:
@@ -422,6 +440,8 @@ class MultiViewWindow(QMainWindow):
             self.diff_label.hide()
         if hasattr(self, "mask_label"):
             self.mask_label.hide()
+        if hasattr(self, "plot_label"):
+            self.plot_label.hide()
 
         # ウィンドウタイトルをリセット
         self.setWindowTitle("TrainScanner - Multi View")
@@ -526,6 +546,11 @@ class MultiViewManager:
         """Maskを更新"""
         if self.window is not None:
             self.window.update_mask(cv_img)
+
+    def update_plot(self, cv_img):
+        """Plotを更新"""
+        if self.window is not None:
+            self.window.update_plot(cv_img)
 
     def hide_verbose_previews(self):
         """詳細プレビューを非表示"""
