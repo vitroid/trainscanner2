@@ -118,13 +118,14 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
 
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()
-    raw_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
-    unblurred_scaled_frames = FIFO(2)
-    estimate = 5
-    unblurred_scaled_frame_history = FIFO(estimate)
-    unblurred_scaled_frames.append(raw_frame)
-    unblurred_scaled_frame_history.append(raw_frame)
-
+    scaled_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
+    height, width = scaled_frame.shape[:2]
+    scaled_gray_frame = cv2.cvtColor(scaled_frame, cv2.COLOR_BGR2GRAY)
+    window = np.hanning(width) * np.hanning(height)[:, np.newaxis]
+    scaled_std_frame = normalize(scaled_gray_frame) * window
+    last_std_frame = scaled_std_frame
+    origin_x = 0
+    origin_y = 0
     # mask = np.ones(unblurred_scaled_frames.queue[0].shape[:2], dtype=np.float32)
 
     while True:
@@ -134,64 +135,55 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
             break
 
         scaled_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
+        scaled_gray_frame = cv2.cvtColor(scaled_frame, cv2.COLOR_BGR2GRAY)
+        scaled_std_frame = normalize(scaled_gray_frame) * window
         del raw_frame
 
-        height, width = scaled_frame.shape[:2]
-
-        # 直前のフレームからの変位deltaを測定し、積算してフレームごとの絶対位置abs_locを求める。
-        # unblurred_scaled_frameは位置あわせしたあとのフレーム。以後の処理はこれを基準とする。
-        unblurred_scaled_frame, delta, abs_loc = antishaker.add_frame(scaled_frame)
-
-        # unblurred_scaled_framesにはてぶれを修正し,最初のフレームの位置に背景がそろえられた画像が入る。
-        unblurred_scaled_frames.append(unblurred_scaled_frame)
-        unblurred_scaled_frame_history.append(unblurred_scaled_frame)
-
-        logger.debug(f"{frame_index=} {delta=} {abs_loc=}")
-
-        # 平均画像=背景
-        averaged_background = np.zeros_like(
-            unblurred_scaled_frames.queue[0], dtype=np.float32
+        # FFTを使い、unblurred_std_framesの2枚の画像をずらして比較する。
+        # phase correlationを使う。
+        # 周期境界の問題をなくすためにWindow関数をかける。
+        fft0 = np.fft.fft2(last_std_frame)
+        fft1 = np.fft.fft2(scaled_std_frame)
+        # fft1 = np.fft.fft2(np.roll(last_unblurred_std_frame, 1, axis=1))
+        scores = np.fft.ifft2(fft0 * np.conj(fft1))
+        scores = np.abs(scores)
+        scores = normalize(scores)
+        scores = np.roll(scores, (width // 2, height // 2), axis=(1, 0))
+        # center 3x3
+        center = scores[
+            height // 2 - 1 : height // 2 + 2, width // 2 - 1 : width // 2 + 2
+        ]
+        _, _, _, max_loc = cv2.minMaxLoc(center)
+        peak_x = max_loc[0] - 1
+        peak_y = max_loc[1] - 1
+        # print(f"{peak_x=} {peak_y=} {center}")
+        # sys.exit(0)
+        # 例えばpeakが(x,y)=(-1,0)だったとしよう。
+        # 新フレームの原点は旧フレームより(-1,0)だけ移動した。
+        origin_x += peak_x
+        origin_y += peak_y
+        # 極大が原点になるようにscoreをずらす。(x,y)の順。
+        scores = np.roll(scores, (-peak_x, -peak_y), axis=(1, 0))
+        matchrect = MatchRect(
+            value=scores,
+            rect=Rect.from_bounds(
+                left=-width // 2,
+                right=width - width // 2,
+                top=-height // 2,
+                bottom=height - height // 2,
+            ),
         )
-        for fh in unblurred_scaled_frame_history.queue:
-            averaged_background += fh
-        averaged_background /= len(unblurred_scaled_frame_history.queue)
 
-        hdr_avg = std_hdr(averaged_background)
-        # グレースケールに変換
-        base_frame = unblurred_scaled_frames.queue[0]
-        next_frame = unblurred_scaled_frames.queue[1]
+        last_std_frame = scaled_std_frame
+        unblurred_frame = np.roll(scaled_frame, (origin_x, origin_y), axis=(1, 0))
 
-        hdr_base = std_hdr(base_frame)
-        hdr_next = std_hdr(next_frame)
+        # 返すもの。
+        # 1. frame_index
+        # 2. 新しいフレームの補正前の左上の絶対座標
+        # 3. 照合スコア
+        # 4. てぶれを補正した(つまり、旧フレームに位置をあわせた)縮小画像
 
-        # diff = (antimasked_hdr_base - antimasked_hdr_next) ** 2
-        # blurmaskに追加する。maskは平均化されたマスク
-        # mask = blurmask.add_frame(diff)
-
-        # 平均背景をさしひいて、前景を強調する。
-        # 今はマスクを使っていない。
-        base_masked = hdr_base.copy() - hdr_avg  # * mask
-        next_masked = hdr_next.copy() - hdr_avg  # * mask
-
-        # こんどは移動量をたっぷりとる。
-        max_shift = 100
-
-        base_masked_extended = np.zeros(
-            [height + 2 * max_shift, width + 2 * max_shift],
-            dtype=np.float32,
-        )
-        base_masked_extended[max_shift:-max_shift, max_shift:-max_shift] = base_masked
-
-        base_imagerect = ImageRect(
-            image=base_masked_extended,
-            lefttop=(-max_shift, -max_shift),
-        )
-        next_imagerect = ImageRect(image=next_masked, lefttop=(0, 0))
-        # scoreとは、2つの画像のピクセル内積。1に近いほど画像が似ている=よく重なる。
-        # match_rectはrect付き行列。
-        matchrect = match_rect(base_imagerect, next_imagerect)
-
-        yield frame_index, abs_loc, matchrect, unblurred_scaled_frame
+        yield frame_index, (origin_x, origin_y), matchrect, unblurred_frame
 
 
 def main():
