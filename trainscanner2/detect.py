@@ -156,14 +156,16 @@ class MotionDetector:
 
         maxima_xy = []
         maxima_score = []
-        for (x, y), score in sorted(
-            matchrect.peaks(height=min_score, subpixel=True),
-            key=lambda x: x[1],
-            reverse=True,
-        ):
-            if np.floor(x + 0.5) != 0.0 or np.floor(y + 0.5) != 0.0:
-                maxima_xy.append((float(x), float(y)))
-                maxima_score.append(score)
+        # matchrect が None の場合はスキップ（最初のフレームなど）
+        if matchrect is not None:
+            for (x, y), score in sorted(
+                matchrect.peaks(height=min_score, subpixel=True),
+                key=lambda x: x[1],
+                reverse=True,
+            ):
+                if np.floor(x + 0.5) != 0.0 or np.floor(y + 0.5) != 0.0:
+                    maxima_xy.append((float(x), float(y)))
+                    maxima_score.append(score)
 
         maxima_xy_array = np.array(maxima_xy[:num_peaks])
         maxima_score = maxima_score[:num_peaks]
