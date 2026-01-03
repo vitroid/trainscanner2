@@ -295,6 +295,9 @@ class Render_one:
                 base_path = f"{self.video_base}_{self.id}"
             elif self.video_path:
                 video_base = os.path.splitext(self.video_path)[0]
+                # 一時ファイルなどの場合はbasenameのみを使用
+                if "temp" in video_base or video_base.startswith("/tmp"):
+                    video_base = os.path.basename(video_base)
                 base_path = f"{video_base}_{self.id}"
             else:
                 base_path = f"train_scan_{self.id}"
@@ -379,9 +382,12 @@ class Render:
         if use_pyqt:
             # 動画ファイルパスからベース名を取得
             vb = video_base
-            if vb is None and video_path:
+            if not vb and video_path:
                 # 拡張子を除いたベース名を取得
                 vb = os.path.splitext(video_path)[0]
+                # 一時ファイルなどの場合はbasenameのみを使用
+                if "temp" in vb or vb.startswith("/tmp"):
+                    vb = os.path.basename(vb)
 
             try:
                 if use_multiview and MULTIVIEW_AVAILABLE:
