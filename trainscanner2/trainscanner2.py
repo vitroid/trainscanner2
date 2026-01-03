@@ -27,11 +27,15 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
     logger.info(f"process_video starting for: {videofile}")
 
     # 保存時のベース名（パスを含む）を決定
-    if video_base is None:
+    if not video_base:
         video_base = os.path.splitext(videofile)[0]
         # URLドロップなどで一時フォルダにある場合は、現在のディレクトリに保存するようにする
         if "temp" in videofile or videofile.startswith(tempfile.gettempdir()):
             video_base = os.path.basename(video_base)
+    else:
+        # YouTubeなどのURLからの場合は、既にタイトルが渡されているが、
+        # 確実にカレントディレクトリに保存されるよう、パス部分を除去する
+        video_base = os.path.basename(video_base)
 
     vl = video_loader_factory(videofile)
     total_frames = vl.total_frames()
@@ -89,8 +93,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
         if multiview_manager:
             multiview_manager.update_preview(frame)
             if logger.getEffectiveLevel() <= INFO:
-                if matchscore is not None:
-                    multiview_manager.update_plot(matchscore.plot_image())
+                multiview_manager.update_plot(matchscore.plot_image())
             else:
                 # 非表示にする
                 multiview_manager.hide_verbose_previews()
@@ -131,7 +134,7 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
                 all_paths_data[str(path_id)] = path_data
 
         if all_paths_data:
-            dump_file = os.path.splitext(videofile)[0] + ".ts2dump"
+            dump_file = video_base + ".ts2dump"
             with open(dump_file, "w", encoding="utf-8") as f:
                 json.dump(all_paths_data, f, indent=2, ensure_ascii=False)
     except Exception as e:
