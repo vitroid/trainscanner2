@@ -118,7 +118,7 @@ def get_phase_correlation_score_map(img1, img2, window):
 
     # Cross-power spectrum
     # f1 に対して f2 がどれだけ動いたか
-    cross_power = f2 * np.conj(f1)
+    cross_power = f1 * np.conj(f2)
     normalized_cross_power = cross_power / (np.abs(cross_power) + 1e-15)
 
     score_map = np.abs(np.fft.ifft2(normalized_cross_power))
@@ -135,9 +135,6 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
 
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()
-    if raw_frame is None:
-        return
-
     scaled_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
     height, width = scaled_frame.shape[:2]
     scaled_gray_frame = cv2.cvtColor(scaled_frame, cv2.COLOR_BGR2GRAY)
@@ -150,9 +147,6 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     # fftshift後の中心座標
     center_x, center_y = width // 2, height // 2
 
-    # 最初のフレームをそのまま返す（analyze_test.pyと同じ）
-    yield 0, (0.0, 0.0), None, scaled_frame
-
     while True:
         frame_index = vl.head
         raw_frame = vl.next()
@@ -163,78 +157,30 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
         scaled_gray_frame = cv2.cvtColor(scaled_frame, cv2.COLOR_BGR2GRAY)
         del raw_frame
 
-        # 位相限定相関を使ってスコアマップを計算（analyze_test.pyと同じ実装）
+        # 位相限定相関を使ってスコアマップを計算
         scores = get_phase_correlation_score_map(
             last_gray_frame, scaled_gray_frame, window
         )
 
-        # 背景の手振れ補正のため、中心付近（原点付近）のピークのみを探す
-        # 動体が大きく動いている場合、最大ピークは動体の移動を表す可能性があるため、
-        # 中心付近の範囲内で最大値を探す
-        shake = 20  # 手振れの最大範囲（ピクセル単位）
-
-        # 中心領域を抽出（境界チェック付き）
-        y_start = max(0, center_y - shake)
-        y_end = min(height, center_y + shake + 1)
-        x_start = max(0, center_x - shake)
-        x_end = min(width, center_x + shake + 1)
-        center_region = scores[y_start:y_end, x_start:x_end]
-
-        # 中心領域内で最大値を探す
-        _, max_val, _, max_loc = cv2.minMaxLoc(center_region)
-
-        # 中心領域内での相対位置を元の座標系に変換
-        # cv2.minMaxLoc は (x, y) = (列, 行) の順序で返す
-        peak_x = float((max_loc[0] + x_start) - center_x)
-        peak_y = float((max_loc[1] + y_start) - center_y)
-
-        # デバッグ: スコアマップ全体の最大値も確認（動体の移動を検出しているか）
-        # analyze_test.pyと同じ方法で全体からも検出してみる
-        _, global_max_val, _, global_max_loc = cv2.minMaxLoc(scores)
-        global_peak_x = float(global_max_loc[0] - center_x)
-        global_peak_y = float(global_max_loc[1] - center_y)
-
-        # デバッグ出力（最初の数フレームのみ）
-        if frame_index <= 5:
-            diff = cv2.absdiff(last_gray_frame, scaled_gray_frame)
-            diff_sum = np.sum(diff)
-            print(
-                f"[analyze] Frame {frame_index}: center_peak=({peak_x:.2f}, {peak_y:.2f}), "
-                f"center_score={max_val:.4f}, "
-                f"global_peak=({global_peak_x:.2f}, {global_peak_y:.2f}), "
-                f"global_score={global_max_val:.4f}, "
-                f"diff_sum={diff_sum:.0f}"
-            )
-
-        # 相関が低すぎる場合はノイズとみなして移動を無視（ドリフト・ぶっ飛び防止）
-        # analyze_test.pyと同じ閾値を使用
-        # ただし、中心領域のピークが低い場合は、グローバルピークを使用（動体の移動を検出している場合）
-        if max_val > 0.03:
-            origin_x += peak_x
-            origin_y += peak_y
-            logger.debug(
-                f"Frame {frame_index}: peak=({peak_x:.2f}, {peak_y:.2f}), abs=({origin_x:.2f}, {origin_y:.2f}), score={max_val:.3f}"
-            )
-        elif (
-            global_max_val > 0.03
-            and abs(global_peak_x) < shake
-            and abs(global_peak_y) < shake
-        ):
-            # 中心領域のピークが低いが、グローバルピークが中心付近にある場合はそれを使用
-            origin_x += global_peak_x
-            origin_y += global_peak_y
-            logger.debug(
-                f"Frame {frame_index}: using global_peak=({global_peak_x:.2f}, {global_peak_y:.2f}), abs=({origin_x:.2f}, {origin_y:.2f}), score={global_max_val:.3f}"
-            )
-        else:
-            logger.debug(
-                f"Frame {frame_index}: low correlation ({max_val:.3f}), ignoring movement"
-            )
-            print(f"  → 相関値が低いため、移動を無視しました")
+        # center 3x3
+        shake = 1
+        center = scores[
+            center_y - shake : center_y + shake + 1,
+            center_x - shake : center_x + shake + 1,
+        ]
+        _, _, _, max_loc = cv2.minMaxLoc(center)
+        peak_x = max_loc[0] - shake
+        peak_y = max_loc[1] - shake
+        print(f"{peak_x=} {peak_y=} {center}")
+        # sys.exit(0)
+        # 例えばpeakが(x,y)=(-1,0)だったとしよう。
+        # 新フレームの原点は旧フレームより(-1,0)だけ移動した。
+        origin_x += peak_x
+        origin_y += peak_y
         # 極大が原点になるようにscoreをずらす。(x,y)の順。
         scores = np.roll(scores, (-peak_x, -peak_y), axis=(1, 0))
         matchrect = MatchRect(
-            value=scores,
+            value=scores * 5,
             rect=Rect.from_bounds(
                 left=-center_x,
                 right=width - center_x,
@@ -325,37 +271,11 @@ def main():
     if scale > 1.0:
         scale = 1.0
     vl = video_loader_factory(videofile)
-
-    # 補正前のフレームも保持するために、analyze_iterを少し変更するか、
-    # ここで補正前のフレームを再取得する必要がある
-    # 簡易的に、最初のフレームを保存して比較表示
-    first_frame = None
-
     for frame_index, absolute_position, matchrect, unblurred_frame in analyze_iter(
         vl, scaling_ratio=scale
     ):
-        if first_frame is None:
-            first_frame = unblurred_frame.copy()
-
-        abs_x, abs_y = absolute_position
-        print(f"Frame {frame_index}: 累積移動量=({abs_x:.2f}, {abs_y:.2f})")
-
-        # 補正後のフレームを表示
-        cv2.imshow("Stabilized (補正後)", unblurred_frame)
-
-        # スコアマップを表示（デバッグ用）
-        if matchrect is not None:
-            score_display = matchrect.plot_image()
-            cv2.imshow("Score Map", score_display)
-
-        # 累積移動量が大きい場合、黒い帯が見えるはず
-        if abs(abs_x) > 5 or abs(abs_y) > 5:
-            print(f"  → 大きな移動が検出されました！黒い帯が見えるはずです。")
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    cv2.destroyAllWindows()
+        cv2.imshow("unblurred_frame", unblurred_frame)
+        cv2.waitKey(1)
 
 
 if __name__ == "__main__":

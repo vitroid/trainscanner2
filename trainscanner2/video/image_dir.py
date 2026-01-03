@@ -16,6 +16,7 @@ class VideoLoader(object):
         self._file_index = 0
         self._head = 0
         self.last_frame = None
+        self.last_sig = None
         self.duplicate_threshold = duplicate_threshold
         # ディレクトリ内のファイルをソートしておく
         self.filenames = sorted(
@@ -35,15 +36,17 @@ class VideoLoader(object):
             if frame is None:
                 continue
 
-            if (
-                self.last_frame is not None
-                and frame.shape == self.last_frame.shape
-            ):
-                # 差分の絶対値の平均を計算（全ピクセル・全チャンネルの平均）
-                mean_diff = np.mean(cv2.absdiff(frame, self.last_frame))
+            # 縮小・グレースケール化・平滑化により署名を作成
+            small = cv2.resize(frame, (64, 64), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+            if self.last_sig is not None and blurred.shape == self.last_sig.shape:
+                mean_diff = np.mean(cv2.absdiff(blurred, self.last_sig))
                 if mean_diff < self.duplicate_threshold:
                     continue
 
+            self.last_sig = blurred
             self.last_frame = frame
             return frame
         return None
