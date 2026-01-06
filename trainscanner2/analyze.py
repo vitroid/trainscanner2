@@ -106,7 +106,7 @@ def normalize(x):
     return (x - np.min(x)) / (np.max(x) - np.min(x))
 
 
-def get_phase_correlation_score_map(img1, img2, window):
+def get_phase_correlation_score_map(img1, img2, window=1.0):
     """
     2つの画像間の位相限定相関行列を計算する。
     """
@@ -157,21 +157,24 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
         scaled_gray_frame = cv2.cvtColor(scaled_frame, cv2.COLOR_BGR2GRAY)
         del raw_frame
 
+        # てぶれ補正のためには厳密な直流成分管理が必要。
+        scores0 = get_phase_correlation_score_map(last_gray_frame, scaled_gray_frame)
+
         # 位相限定相関を使ってスコアマップを計算
         scores = get_phase_correlation_score_map(
             last_gray_frame, scaled_gray_frame, window
         )
 
         # center 3x3
-        shake = 1
-        center = scores[
+        shake = 3
+        center = scores0[
             center_y - shake : center_y + shake + 1,
             center_x - shake : center_x + shake + 1,
         ]
         _, _, _, max_loc = cv2.minMaxLoc(center)
         peak_x = max_loc[0] - shake
         peak_y = max_loc[1] - shake
-        print(f"{peak_x=} {peak_y=} {center}")
+        print(f"{peak_x=} {peak_y=}")
         # sys.exit(0)
         # 例えばpeakが(x,y)=(-1,0)だったとしよう。
         # 新フレームの原点は旧フレームより(-1,0)だけ移動した。

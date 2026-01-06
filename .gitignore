@@ -212,3 +212,7 @@ motions_test.json
 *.pngs/
 experimental/
 *.tspos2
+*.ts2dump
+*.log1
+*.log2
+
