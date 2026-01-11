@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QScrollBar,
 )
-from PyQt6.QtGui import QImage, QPixmap, QShortcut, QKeySequence
+from PyQt6.QtGui import QImage, QPixmap, QShortcut, QKeySequence, QColor
 from PyQt6.QtCore import Qt, QTimer
 
 from trainscanner2.widget import ImageStripsWidget
@@ -106,9 +106,9 @@ class ImageWindow(QMainWindow):
             self.resize(800, 600)
 
         # メインウィジェットとレイアウト
-        main_widget = QWidget()
+        self.main_widget = QWidget()
         main_layout = QVBoxLayout()
-        main_widget.setLayout(main_layout)
+        self.main_widget.setLayout(main_layout)
 
         # ImageStrips用の表示ウィジェット（仮想スクロール）
         self.imagestrips_widget = ImageStripsWidget(show_gaps=show_gaps)
@@ -144,14 +144,43 @@ class ImageWindow(QMainWindow):
         if show_buttons:
             button_layout = QHBoxLayout()
 
+            # ボタンのスタイルシート（青背景、白文字）
+            button_style = """
+                QPushButton {
+                    background-color: #3498db;
+                    color: white;
+                    border: 2px solid #2980b9;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    min-height: 30px;
+                }
+                QPushButton:hover {
+                    background-color: #2980b9;
+                    border-color: #21618c;
+                }
+                QPushButton:pressed {
+                    background-color: #21618c;
+                    border-color: #1b4f72;
+                }
+                QPushButton:disabled {
+                    background-color: #bdc3c7;
+                    border-color: #95a5a6;
+                    color: #7f8c8d;
+                }
+            """
+
             # 保存ボタン
             self.save_button = QPushButton("保存")
             self.save_button.clicked.connect(self.save_image)
+            self.save_button.setStyleSheet(button_style)
             button_layout.addWidget(self.save_button)
 
             # 高精細保存ボタン
             self.save_hires_button = QPushButton("高精細保存")
             self.save_hires_button.clicked.connect(self.save_hires_image)
+            self.save_hires_button.setStyleSheet(button_style)
             button_layout.addWidget(self.save_hires_button)
 
             # 閉じるボタンは廃止されました
@@ -159,7 +188,7 @@ class ImageWindow(QMainWindow):
             # ボタンをレイアウトに追加
             main_layout.addLayout(button_layout)
 
-        self.setCentralWidget(main_widget)
+        self.setCentralWidget(self.main_widget)
 
         # ウィンドウを閉じるショートカットも廃止されました
 
@@ -167,6 +196,38 @@ class ImageWindow(QMainWindow):
         """スクロールバーの値が変更されたときに呼ばれる"""
         self.logger.debug(f"Scroll position changed to: {value}")
         self.imagestrips_widget.set_scroll_position(value)
+
+    def _get_score_color(self, score):
+        """
+        スコアに応じてHSV色空間での色を取得
+
+        Args:
+            score: スコア値（0.0-1.0）
+
+        Returns:
+            QColor: スコアに応じた色
+        """
+        # スコアを0.0-1.0の範囲に正規化
+        s = max(0.0, min(score, 1.0))
+        # Hue: 0 (Red) -> 120 (Green) にスコアに比例して変化
+        # Saturation: スコアに比例して増加
+        # Value: 255（明るさは一定）
+        hue = int(s * 120)  # 0-120の範囲（HSV色相）
+        sat = int(s * 255)  # 0-255の範囲（彩度）
+        val = 255  # 明るさは最大値
+        return QColor.fromHsv(hue, sat, val)
+
+    def _update_background_color(self):
+        """スコアに応じてウィンドウの背景色を更新"""
+        if self.render_one and not self.is_preview:
+            score = self.render_one.score
+            bg_color = self._get_score_color(score)
+            color_name = bg_color.name()
+            # ウィンドウとメインウィジェットの背景色を設定
+            self.setStyleSheet(f"QMainWindow {{ background-color: {color_name}; }}")
+            self.main_widget.setStyleSheet(
+                f"QWidget {{ background-color: {color_name}; }}"
+            )
 
     def update_image(self, cv_img, force=False):
         """
@@ -188,6 +249,8 @@ class ImageWindow(QMainWindow):
                 self.setWindowTitle(
                     f"TrainScanner - ID: {self.window_id} [Score: {score:.3f}]"
                 )
+            # スコアに応じて背景色を更新
+            self._update_background_color()
 
         # ImageStripsモードの場合
         if (

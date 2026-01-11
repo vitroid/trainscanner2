@@ -12,7 +12,49 @@ from trainscanner2.window import WindowManager
 # ImageWindowとWindowManagerはwindow.pyに移動しました
 
 
-def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
+def apply_score_coloring(frame: np.ndarray, score: float) -> np.ndarray:
+    """
+    スコアに応じてフレームにHSV色空間での彩色を追加
+
+    Args:
+        frame: 入力フレーム（BGR）
+        score: スコア値（0.0-1.0）
+
+    Returns:
+        彩色されたフレーム（BGR）
+    """
+    # スコアを0.0-1.0の範囲に正規化
+    s = max(0.0, min(score, 1.0))
+
+    # Hue: 0 (Red) -> 120 (Green) にスコアに比例して変化
+    # Saturation: スコアに比例して増加
+    hue_shift = int(s * 120)  # 0-120の範囲（HSV色相）
+    saturation_factor = s  # 0.0-1.0の範囲
+
+    # BGR -> HSVに変換
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
+
+    # Hueをシフト（色相環で回転）
+    hsv[:, :, 0] = (hsv[:, :, 0] + hue_shift) % 180
+
+    # Saturationを増加（背景色を鮮やかに）
+    hsv[:, :, 1] = hsv[:, :, 1] * (1.0 + saturation_factor * 0.5)  # 最大1.5倍まで
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
+
+    # HSV -> BGRに戻す
+    hsv = hsv.astype(np.uint8)
+    colored = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    # 元のフレームと彩色されたフレームをブレンド（彩色の強さを調整）
+    alpha = saturation_factor * 0.3  # 最大30%の彩色強度
+    result = cv2.addWeighted(frame, 1.0 - alpha, colored, alpha, 0)
+
+    return result
+
+
+def rotated_placement(
+    canvas, frame, sine, cosine, train_position, first=False, score=0.0
+):
     h, w = frame.shape[:2]
     rh = int(abs(h * cosine) + abs(w * sine))
     rw = int(abs(h * sine) + abs(w * cosine))
@@ -23,6 +65,11 @@ def rotated_placement(canvas, frame, sine, cosine, train_position, first=False):
             (-sine, cosine, sine * halfw - cosine * halfh + rh / 2),
         )
     )
+
+    # スコアに応じて彩色を適用
+    if score > 0:
+        frame = apply_score_coloring(frame, score)
+
     rotated = cv2.warpAffine(frame, R, (rw, rh))
     # cv2.imshow("rotated", rotated)
     # cv2.waitKey(0)
@@ -119,8 +166,15 @@ class Render_one:
             self.train_positions.append(self.train_position)
             cosine = dx / dd
             sine = dy / dd
+            # スコアの瞬間値（h.value）を渡して彩色を適用
             rotated_placement(
-                self.canvas, frame, sine, cosine, self.train_position, self.first
+                self.canvas,
+                frame,
+                sine,
+                cosine,
+                self.train_position,
+                self.first,
+                score=h.value,
             )
             self.first = False
         else:
