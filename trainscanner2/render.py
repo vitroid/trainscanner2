@@ -436,10 +436,10 @@ class Render:
     def _create_render_one(self, id: int) -> Render_one:
         """
         新しいRender_oneインスタンスを作成する
-        
+
         Args:
             id: PathのID
-            
+
         Returns:
             Render_one: 新しく作成されたRender_oneインスタンス
         """
