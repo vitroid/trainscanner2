@@ -50,6 +50,7 @@ class Render_one:
         video_path: str = None,
         video_base: str = None,
         cache: bool = False,
+        skip_display: bool = False,  # ウィンドウ表示をスキップ（高精細画像生成時など）
     ):
         self.num_leading_frames = num_leading_frames
         self.leading_frames = FIFO(num_leading_frames)
@@ -64,6 +65,7 @@ class Render_one:
         self.alive = True
         self.window_manager = window_manager
         self.window = None
+        self.skip_display = skip_display  # ウィンドウ表示をスキップするかどうか
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
         self.video_path = video_path  # 動画ファイルパス（高解像度再スキャン用）
         self.video_base = video_base  # 保存時のベース名
@@ -125,6 +127,112 @@ class Render_one:
             # dd=0の場合も位置を記録（前のフレームと同じ位置）
             self.train_positions.append(self.train_position)
 
+    def put_process_only(
+        self,
+        frame: np.ndarray,
+        pathitem: PathItem,
+        absolute_position=None,
+    ):
+        """
+        処理部分のみを実行（Window更新なし）
+        並列実行用のメソッド
+        """
+        # renderを開始するまでに「溜める」時間
+        delay_frames = 10
+        if not self.alive:
+            return
+        self.pathitem_history.append(pathitem)
+        self.abs_positions.append(
+            absolute_position if absolute_position is not None else (0, 0)
+        )
+        self.leading_frames.append(frame)
+        if len(self.pathitem_history) > self.num_leading_frames:
+            self._render_one(frame, pathitem)
+        elif len(self.pathitem_history) == delay_frames:
+            for f, pi in zip(self.leading_frames.queue, self.pathitem_history):
+                self._render_one(f, pi)
+
+    def update_window_display(self):
+        """
+        Window更新を実行（メインスレッドで実行する必要がある）
+        """
+        if len(self.pathitem_history) <= self.num_leading_frames:
+            return
+
+        # 画像を取得して表示
+        use_imagestrips = isinstance(self.canvas, ImageStrips)
+        if use_imagestrips:
+            # ImageStripsモード: PyQt6の場合はupdate_windowにNoneを渡してcanvasを直接参照
+            if self.window_manager:
+                try:
+                    if self.window is None:
+                        self.window = self.window_manager.create_window(
+                            self.id, render_one=self
+                        )
+                    self.window_manager.update_window(self.id, None)  # Noneを渡す
+                except Exception as e:
+                    self.logger.error(f"PyQt6 window error: {e}")
+            else:
+                # OpenCVの場合: get_image()で全体画像を取得して表示（重いが動作する）
+                img = self.canvas.get_image()
+                if img is not None:
+                    cv2.putText(
+                        img,
+                        f"Score: {self.score:.3f}",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 0, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        img,
+                        f"ID: {self.id}",
+                        (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 0),
+                        2,
+                    )
+                    cv2.imshow(f"{self.id}", img)
+        else:
+            # 従来モード: 画像を取得して渡す
+            img = self.canvas.get_image()
+            if img is not None:
+                cv2.putText(
+                    img,
+                    f"Score: {self.score:.3f}",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2,
+                )
+                cv2.putText(
+                    img,
+                    f"ID: {self.id}",
+                    (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                )
+                if self.window_manager:
+                    try:
+                        if self.window is None:
+                            self.window = self.window_manager.create_window(
+                                self.id, render_one=self
+                            )
+                        self.window_manager.update_window(self.id, img)
+                    except Exception as e:
+                        self.logger.error(
+                            f"PyQt6 window error: {e}, falling back to OpenCV"
+                        )
+                        cv2.imshow(f"{self.id}", img)
+                else:
+                    # PyQt6が使用されていない場合はOpenCVを使用
+                    cv2.imshow(f"{self.id}", img)
+
     def put(
         self,
         frame: np.ndarray,
@@ -143,11 +251,14 @@ class Render_one:
         if len(self.pathitem_history) > self.num_leading_frames:
             self._render_one(frame, pathitem)
 
-            # ImageStripsモードの場合、canvas.get_image()は重い（全体結合）
-            # PyQt6では、update_windowにNoneを渡してcanvasを直接参照させる
+            # ウィンドウ表示をスキップする場合（高精細画像生成時など）
+            if self.skip_display:
+                return
+
+            # 画像を取得して表示
             use_imagestrips = isinstance(self.canvas, ImageStrips)
             if use_imagestrips:
-                # ImageStripsモード: ウィンドウに通知だけ（画像は渡さない）
+                # ImageStripsモード: PyQt6の場合はupdate_windowにNoneを渡してcanvasを直接参照
                 if self.window_manager:
                     try:
                         if self.window is None:
@@ -157,7 +268,29 @@ class Render_one:
                         self.window_manager.update_window(self.id, None)  # Noneを渡す
                     except Exception as e:
                         self.logger.error(f"PyQt6 window error: {e}")
-                # OpenCVは非対応（ImageStripsの全体画像が必要）
+                else:
+                    # OpenCVの場合: get_image()で全体画像を取得して表示（重いが動作する）
+                    img = self.canvas.get_image()
+                    if img is not None:
+                        cv2.putText(
+                            img,
+                            f"Score: {self.score:.3f}",
+                            (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 0, 255),
+                            2,
+                        )
+                        cv2.putText(
+                            img,
+                            f"ID: {self.id}",
+                            (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 255, 0),
+                            2,
+                        )
+                        cv2.imshow(f"{self.id}", img)
             else:
                 # 従来モード: 画像を取得して渡す
                 img = self.canvas.get_image()

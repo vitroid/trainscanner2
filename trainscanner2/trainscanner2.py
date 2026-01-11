@@ -6,6 +6,7 @@ import tempfile
 import yt_dlp
 from logging import getLogger, INFO, DEBUG, WARNING, basicConfig
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QShortcut, QKeySequence
@@ -40,7 +41,9 @@ def process_video(videofile: str, wait=False, video_base=None):
     if scale > 1.0:
         scale = 1.0
 
+    # PyQt6を使用（WindowManagerのタイマーでメインスレッドからWindow更新を実行）
     renderer = Render(
+        use_pyqt=True,  # PyQt6を使用（Window更新はメインスレッドで実行される）
         video_path=os.path.abspath(videofile),  # 確実に絶対パスで記録
         video_base=video_base,
         scaling_factor=scale,
@@ -53,9 +56,9 @@ def process_video(videofile: str, wait=False, video_base=None):
             frame_index,
             absolute_position,
             matchscore,
-            scaled_frame,
+            unblurred_scaled_frame,  # 手ぶれ補正後のフレーム
         ) in analyze_iter(vl, scaling_ratio=scale, antishaker=antishaker):
-            yield frame_index, absolute_position, matchscore, scaled_frame
+            yield frame_index, absolute_position, matchscore, unblurred_scaled_frame
 
     logger.info("Starting video processing...")
     motiondetector = MotionDetector()
@@ -63,8 +66,23 @@ def process_video(videofile: str, wait=False, video_base=None):
     # 各Pathを独立したworkerで処理するための管理
     path_workers = {}  # {path_id: Render_one}
 
+    # 並列処理用のThreadPoolExecutor
+    max_workers = (
+        min(len(path_workers) + 4, os.cpu_count() or 4)
+        if path_workers
+        else os.cpu_count() or 4
+    )
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+
     def process_frame(frame_index, absolute_position, matchscore, frame):
         """1フレームの処理"""
+        # プレビューウィンドウに手ぶれ補正後のフレームを表示
+        if renderer.window_manager:
+            try:
+                renderer.window_manager.update_preview_window(frame)
+            except Exception as e:
+                logger.debug(f"Preview window update error: {e}")
+
         paths, dropped_paths, active_path_ids = motiondetector._detect(
             matchscore, frame_index=frame_index
         )
@@ -72,7 +90,9 @@ def process_video(videofile: str, wait=False, video_base=None):
         if len(paths) == 0:
             antishaker.abs_loc = (0, 0)
 
-        # 各Pathを独立したworkerで処理
+        # 各Pathの処理を並列実行（処理部分のみ、Window更新は除く）
+        # OpenCVのcv2.imshow()はスレッドセーフではないため、Window更新はメインスレッドで実行
+        futures = {}
         for id, path in paths.items():
             # 既存のworkerがある場合は使用、なければ新規作成
             if id not in path_workers:
@@ -80,15 +100,33 @@ def process_video(videofile: str, wait=False, video_base=None):
                 render_one = renderer._create_render_one(id)
                 path_workers[id] = render_one
 
-            # 各Pathのworkerで処理（Window表示まで担当）
+            # 各Pathのworkerで処理（並列実行、Window更新は除く）
             render_one = path_workers[id]
-            render_one.put(
-                frame=frame,
+            future = executor.submit(
+                render_one.put_process_only,
+                frame=frame.copy() if hasattr(frame, "copy") else frame,
                 pathitem=path.history[-1],
                 absolute_position=absolute_position,
             )
+            futures[id] = future
 
-        # 個別ウィンドウの更新を許可
+        # すべての処理が完了するのを待つ
+        for id, future in futures.items():
+            try:
+                future.result()  # 完了を待つ（エラーがあれば例外を発生）
+            except Exception as e:
+                logger.error(f"Error processing path {id}: {e}")
+
+        # Window更新はメインスレッドで実行（PyQt6の場合、WindowManagerが管理）
+        # PyQt6の場合はupdate_window()を呼ぶ必要がある
+        for id, path in paths.items():
+            if id in path_workers:
+                try:
+                    path_workers[id].update_window_display()
+                except Exception as e:
+                    logger.error(f"Error updating window for path {id}: {e}")
+
+        # WindowManagerのタイマーが動作するようにprocessEvents()を呼ぶ
         if renderer.app:
             renderer.app.processEvents()
 
@@ -98,8 +136,12 @@ def process_video(videofile: str, wait=False, video_base=None):
             if path_id in path_workers:
                 del path_workers[path_id]
 
-    for frame_index, absolute_position, matchscore, frame in iterator():
-        process_frame(frame_index, absolute_position, matchscore, frame)
+    try:
+        for frame_index, absolute_position, matchscore, frame in iterator():
+            process_frame(frame_index, absolute_position, matchscore, frame)
+    finally:
+        # すべての並列処理が完了するのを待つ
+        executor.shutdown(wait=True)
 
     all_detected_paths = dict(motiondetector.paths)
     for path_id, history in motiondetector.done():

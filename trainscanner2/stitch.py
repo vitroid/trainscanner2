@@ -234,6 +234,7 @@ def stitch(tspos2file: str, verbose: bool = False, progress_callback=None):
         scaling_factor=1.0 / scaling_factor,  # 高解像度への変換係数
         video_path=videofile,
         cache=True,
+        skip_display=True,  # 高精細画像生成時はウィンドウ表示をスキップ（メモリ節約）
     )
 
     # 処理開始のメッセージ

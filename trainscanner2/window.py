@@ -82,6 +82,7 @@ class ImageWindow(QMainWindow):
         self.video_base = video_base or "train_scan"
         self.close_callback = close_callback
         self.render_one = render_one  # stitching履歴にアクセスするため
+        self.is_preview = window_id == -1  # プレビューウィンドウかどうか
 
         # ウィンドウタイトルをビデオファイル名のbasenameに設定
         if video_base:
@@ -94,10 +95,15 @@ class ImageWindow(QMainWindow):
         self.current_image = None  # 現在表示中の画像
         self.last_update_time = 0  # 最後の更新時刻（更新頻度制限用）
         self.pending_image = None  # 保留中の画像（1秒以内の更新はここに保存）
+        self.initial_size_set = (
+            False  # プレビューウィンドウで初期サイズを設定したかどうか
+        )
 
         # 最大ウィンドウサイズを設定（画面サイズの80%程度）
         self.setMaximumSize(1920, 1080)
-        self.resize(800, 600)
+        if not self.is_preview:
+            # プレビューウィンドウでない場合のみ固定サイズで初期化
+            self.resize(800, 600)
 
         # メインウィジェットとレイアウト
         main_widget = QWidget()
@@ -275,6 +281,22 @@ class ImageWindow(QMainWindow):
             self.image_label.setPixmap(pixmap)
             self.image_label.adjustSize()
             self.image_label.repaint()
+
+            # プレビューウィンドウの場合、画像サイズに合わせてウィンドウサイズを設定
+            if self.is_preview and not self.initial_size_set:
+                img_height, img_width = cv_img.shape[:2]
+                # 最大サイズを超えないように調整
+                max_width, max_height = 1920, 1080
+                if img_width > max_width or img_height > max_height:
+                    scale = min(max_width / img_width, max_height / img_height)
+                    window_width = int(img_width * scale)
+                    window_height = int(img_height * scale)
+                else:
+                    window_width = img_width
+                    window_height = img_height
+                self.resize(window_width, window_height)
+                self.initial_size_set = True
+
             QApplication.processEvents()
             QTimer.singleShot(10, self._scroll_to_left)
 
@@ -664,6 +686,32 @@ class WindowManager:
         """ウィンドウの画像を更新"""
         if window_id in self.windows:
             self.windows[window_id].update_image(cv_img)
+
+    def update_preview_window(self, cv_img):
+        """
+        プレビューウィンドウ（現在のフレーム表示用）を更新
+
+        Args:
+            cv_img: 表示するOpenCV画像
+        """
+        PREVIEW_WINDOW_ID = -1  # プレビューウィンドウ用の特別なID
+        if PREVIEW_WINDOW_ID not in self.windows:
+            # プレビューウィンドウを作成（render_oneなし、ボタンなし）
+            window = ImageWindow(
+                PREVIEW_WINDOW_ID,
+                video_base=self.video_base,
+                close_callback=None,  # プレビューウィンドウは閉じても問題ない
+                render_one=None,  # render_oneは不要
+                show_gaps=False,
+                show_buttons=False,  # ボタンは表示しない
+            )
+            window.setWindowTitle("TrainScanner - プレビュー")
+            window.show()
+            self.windows[PREVIEW_WINDOW_ID] = window
+            # 即座にprocessEventsを呼んで表示を確実にする
+            self.app.processEvents()
+        if PREVIEW_WINDOW_ID in self.windows:
+            self.windows[PREVIEW_WINDOW_ID].update_image(cv_img)
 
     def set_window_finished(self, window_id: int, score: float):
         """ウィンドウに処理完了を表示"""
