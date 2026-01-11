@@ -433,6 +433,27 @@ class Render:
         # 閾値を下げる。あるいはこれを使わないほうがいいかも
         self.max_score *= 0.995
 
+    def _create_render_one(self, id: int) -> Render_one:
+        """
+        新しいRender_oneインスタンスを作成する
+        
+        Args:
+            id: PathのID
+            
+        Returns:
+            Render_one: 新しく作成されたRender_oneインスタンス
+        """
+        r = Render_one(
+            id,
+            num_leading_frames=10,
+            window_manager=self.window_manager,
+            scaling_factor=self.scaling_factor,
+            video_path=self.video_path,
+            video_base=self.video_base,
+        )
+        self.renderers[id] = r
+        return r
+
     @property
     def app(self):
         if self.window_manager:

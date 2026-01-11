@@ -60,6 +60,9 @@ def process_video(videofile: str, wait=False, video_base=None):
     logger.info("Starting video processing...")
     motiondetector = MotionDetector()
 
+    # 各Pathを独立したworkerで処理するための管理
+    path_workers = {}  # {path_id: Render_one}
+
     for frame_index, absolute_position, matchscore, frame in iterator():
         paths, dropped_paths, active_path_ids = motiondetector._detect(
             matchscore, frame_index=frame_index
@@ -68,9 +71,20 @@ def process_video(videofile: str, wait=False, video_base=None):
         if len(paths) == 0:
             antishaker.abs_loc = (0, 0)
 
+        # 各Pathを独立したworkerで処理
         for id, path in paths.items():
-            renderer.put(
-                id, frame, path.history[-1], absolute_position=absolute_position
+            # 既存のworkerがある場合は使用、なければ新規作成
+            if id not in path_workers:
+                # Render_oneを作成（各Pathごとに独立）
+                render_one = renderer._create_render_one(id)
+                path_workers[id] = render_one
+            
+            # 各Pathのworkerで処理（Window表示まで担当）
+            render_one = path_workers[id]
+            render_one.put(
+                frame=frame,
+                pathitem=path.history[-1],
+                absolute_position=absolute_position,
             )
 
         # 個別ウィンドウの更新を許可
@@ -79,6 +93,9 @@ def process_video(videofile: str, wait=False, video_base=None):
 
         for path_id in dropped_paths:
             renderer.mark_inactive(id=path_id)
+            # workerから削除
+            if path_id in path_workers:
+                del path_workers[path_id]
 
     all_detected_paths = dict(motiondetector.paths)
     for path_id, history in motiondetector.done():
