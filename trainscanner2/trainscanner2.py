@@ -16,10 +16,9 @@ from trainscanner2.analyze import analyze_iter
 from trainscanner2.detect import MotionDetector
 from trainscanner2.antishake import AntiShaker2
 from trainscanner2.render import Render
-from trainscanner2.droparea import DropAreaWidget
 
 
-def process_video(videofile: str, multiview_manager=None, wait=False, video_base=None):
+def process_video(videofile: str, wait=False, video_base=None):
     """
     動画ファイルを処理する関数
     """
@@ -41,26 +40,11 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
     if scale > 1.0:
         scale = 1.0
 
-    # 既存のMultiViewManagerがある場合は、それを使用
-    if multiview_manager is not None:
-        multiview_manager.clear_all_paths()
-        multiview_manager.set_video_base(video_base)
-        renderer = Render(
-            video_path=os.path.abspath(videofile),  # 確実に絶対パスで記録
-            video_base=video_base,
-            scaling_factor=scale,
-            use_pyqt=False,
-            use_multiview=False,
-        )
-        renderer.multiview_manager = multiview_manager
-        renderer.window_manager = None
-    else:
-        renderer = Render(
-            video_path=os.path.abspath(videofile),  # 確実に絶対パスで記録
-            video_base=video_base,
-            scaling_factor=scale,
-            use_multiview=True,
-        )
+    renderer = Render(
+        video_path=os.path.abspath(videofile),  # 確実に絶対パスで記録
+        video_base=video_base,
+        scaling_factor=scale,
+    )
 
     antishaker = AntiShaker2(velocity=1)
 
@@ -77,23 +61,6 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
     motiondetector = MotionDetector()
 
     for frame_index, absolute_position, matchscore, frame in iterator():
-        # 中断チェック：新しいファイルがドロップされたら即座に終了する
-        if (
-            multiview_manager
-            and hasattr(multiview_manager.window, "interrupted")
-            and multiview_manager.window.interrupted
-        ):
-            logger.info("Processing interrupted by new drop.")
-            return
-
-        if multiview_manager:
-            multiview_manager.update_preview(frame)
-            if logger.getEffectiveLevel() <= INFO:
-                multiview_manager.update_plot(matchscore.plot_image())
-            else:
-                # 非表示にする
-                multiview_manager.hide_verbose_previews()
-
         paths, dropped_paths, active_path_ids = motiondetector._detect(
             matchscore, frame_index=frame_index
         )
@@ -106,15 +73,12 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
                 id, frame, path.history[-1], absolute_position=absolute_position
             )
 
-        if hasattr(renderer, "multiview_manager") and renderer.multiview_manager:
-            renderer.multiview_manager.set_active_paths(active_path_ids)
-            renderer.multiview_manager.app.processEvents()
+        # 個別ウィンドウの更新を許可
+        if renderer.app:
+            renderer.app.processEvents()
 
         for path_id in dropped_paths:
             renderer.mark_inactive(id=path_id)
-
-    if multiview_manager:
-        multiview_manager.set_done()
 
     all_detected_paths = dict(motiondetector.paths)
     for path_id, history in motiondetector.done():
@@ -195,123 +159,56 @@ def download_from_url(url: str, progress_callback=None) -> tuple[str, str]:
 
 
 def main():
+    logger = getLogger(__name__)
+    # 引数の解析（簡易版）
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+
     if "-d" in sys.argv or "--debug" in sys.argv:
         basicConfig(level=DEBUG)
     elif "-v" in sys.argv or "--verbose" in sys.argv:
         basicConfig(level=INFO)
     else:
-        # デフォルトではWARNINGに設定して、並列スレッド内からのGUI操作(imshow等)によるクラッシュを防ぐ
+        # デフォルトではWARNINGに設定
         basicConfig(level=WARNING)
 
+    if not args:
+        print(f"Usage: python {sys.argv[0]} [options] <video_file_or_url>")
+        sys.exit(1)
+
+    videofile = args[0]
     app = QApplication.instance() or QApplication(sys.argv)
 
-    from trainscanner2.multiview import MultiViewManager
+    # URLの場合はダウンロードする
+    actual_video_file = videofile
+    video_base = None
+    if videofile.startswith("http"):
+        try:
+            # ダウンロード進捗を表示するための簡易フック
+            def download_hook(d):
+                if d["status"] == "downloading":
+                    p = d.get("_percent_str", "0%")
+                    logger.info(f"Downloading YouTube video: {p}")
+                    # UIのスレッドを止めないように
+                    QApplication.processEvents()
 
-    manager = MultiViewManager(video_base=None, show_gaps=False, show_buttons=True)
+            actual_video_file, video_base = download_from_url(
+                videofile, progress_callback=download_hook
+            )
+        except Exception as e:
+            logger.error(f"Failed to download video from URL: {e}")
+            sys.exit(1)
 
-    if manager.window:
-        # DropAreaWidgetをオーバーレイとして作成
-        drop_area = DropAreaWidget(manager.window)
-        drop_area.parent_window = manager.window
+    try:
+        process_video(
+            actual_video_file,
+            wait=True,  # コマンドライン実行時は全ウィンドウが閉じるまで待機
+            video_base=video_base,
+        )
+    except Exception as e:
+        logger.error(f"Error during processing: {e}")
+        sys.exit(1)
 
-        # ウィンドウのリサイズに合わせてDropAreaもリサイズする仕掛け
-        def resize_drop_area(event):
-            drop_area.resize(manager.window.size())
-            if hasattr(manager.window, "_original_resizeEvent"):
-                manager.window._original_resizeEvent(event)
-
-        manager.window._original_resizeEvent = manager.window.resizeEvent
-        manager.window.resizeEvent = resize_drop_area
-
-        # 初期表示
-        drop_area.show()
-        drop_area.raise_()
-
-        # 処理中フラグ
-        manager.window.processing = False
-        # 中断フラグ
-        manager.window.interrupted = False
-        manager.window.processing_started = False
-
-        # ウィンドウ自体でもドラッグを受け取れるようにし、DropAreaを表示する
-        manager.window.setAcceptDrops(True)
-
-        def window_dragEnterEvent(event):
-            # 処理中であってもドラッグを受け入れる
-            urls = event.mimeData().urls()
-            if urls:
-                local_file = urls[0].toLocalFile()
-                url_str = urls[0].toString()
-                if (
-                    local_file and drop_area._is_valid_video_file(local_file)
-                ) or drop_area._is_youtube_url(url_str):
-                    drop_area.show()
-                    drop_area.raise_()
-                    event.acceptProposedAction()
-
-        manager.window.dragEnterEvent = window_dragEnterEvent
-
-        def start_processing(videofile: str):
-            logger = getLogger(__name__)
-
-            # もし既に処理中なら、中断フラグを立てて、少し待ってから再試行する
-            if manager.window.processing:
-                logger.info(
-                    "Already processing. Signaling interruption and rescheduling..."
-                )
-                manager.window.interrupted = True
-                # 現在のループが終了して processing = False になるまで待って再試行
-                QTimer.singleShot(200, lambda: start_processing(videofile))
-                return
-
-            # フラグを初期化して処理開始
-            manager.window.interrupted = False
-            manager.window.processing = True
-
-            # ドロップエリアを隠す（処理中はパネルを見せる）
-            drop_area.hide()
-
-            # URLの場合はダウンロードする
-            actual_video_file = videofile
-            video_base = None
-            if videofile.startswith("http"):
-                try:
-                    # ダウンロード進捗を表示するための簡易フック
-                    def download_hook(d):
-                        if d["status"] == "downloading":
-                            p = d.get("_percent_str", "0%")
-                            logger.info(f"Downloading YouTube video: {p}")
-                            # UIのスレッドを止めないように
-                            QApplication.processEvents()
-
-                    actual_video_file, video_base = download_from_url(
-                        videofile, progress_callback=download_hook
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to download video from URL: {e}")
-                    manager.window.processing = False
-                    return
-
-            try:
-                process_video(
-                    actual_video_file,
-                    multiview_manager=manager,
-                    wait=False,
-                    video_base=video_base,
-                )
-            finally:
-                # 処理が終わったら（または中断されたら）フラグを下ろす
-                manager.window.processing = False
-                logger.info("Ready for next drop.")
-
-        manager.window.start_processing = start_processing
-
-        # メインウィンドウでもペースト（Ctrl+V / Cmd+V）をいつでも受け付けるように設定
-        # これにより DropArea が非表示の時（処理中など）でもペーストでファイルを変更できる
-        paste_shortcut = QShortcut(QKeySequence.StandardKey.Paste, manager.window)
-        paste_shortcut.activated.connect(drop_area.handle_paste)
-
-    sys.exit(app.exec())
+    sys.exit(0)
 
 
 if __name__ == "__main__":

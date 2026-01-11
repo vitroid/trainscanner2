@@ -8,15 +8,6 @@ from trainscanner2 import FIFO, PathItem
 from trainscanner2.imagestrips import ImageStrips
 from trainscanner2.window import WindowManager
 
-# マルチビューウィンドウのインポートを条件付きにする
-try:
-    from trainscanner2.multiview import MultiViewManager
-
-    MULTIVIEW_AVAILABLE = True
-except Exception as e:
-    MultiViewManager = None
-    MULTIVIEW_AVAILABLE = False
-
 
 # ImageWindowとWindowManagerはwindow.pyに移動しました
 
@@ -79,10 +70,22 @@ class Render_one:
 
     def done(self):
         self.alive = False
-        # PyQt6ウィンドウは閉じない（ユーザーが手動で閉じるボタンを押すまで残す）
+
+        # ユーザー要求: スコアが0.1未満、かつフレーム数が50以下の場合はウィンドウを閉じる
+        history_len = len(self.pathitem_history)
+        score = self.score
+        should_close = score < 0.1 and history_len <= 50
+
         if self.window_manager and self.window:
-            # ウィンドウのタイトルを「処理完了」に更新
-            self.window_manager.set_window_finished(self.id, self.score)
+            if should_close:
+                self.logger.info(
+                    f"Closing window {self.id} due to low score ({score:.3f}) "
+                    f"and short history ({history_len})"
+                )
+                self.window_manager.close_window(self.id)
+            else:
+                # ウィンドウのタイトルを「処理完了」に更新
+                self.window_manager.set_window_finished(self.id, score)
         else:
             # OpenCVウィンドウのみ自動で閉じる（存在しない場合はエラーを無視）
             try:
@@ -364,14 +367,12 @@ class Render:
         video_path: str = None,
         scaling_factor: float = 1.0,
         show_gaps=False,
-        show_buttons=True,  # ウィンドウに保存・閉じるボタンを表示するか
-        use_multiview=False,  # マルチビューウィンドウを使用するか
+        show_buttons=True,  # ウィンドウに保存ボタンを表示するか
         video_base: str = None,
     ):
         self.renderers = {}  # {id: Render_one} 全Path（active/finished両方）
         self.max_score = 0.0
         self.window_manager = None
-        self.multiview_manager = None
         self.scaling_factor = scaling_factor  # 低解像度→高解像度への変換係数
         self.video_path = video_path  # 動画ファイルパス
         self.video_base = video_base  # 保存時のベース名
@@ -384,25 +385,16 @@ class Render:
                 vb = os.path.splitext(video_path)[0]
 
             try:
-                if use_multiview and MULTIVIEW_AVAILABLE:
-                    # マルチビューウィンドウを使用
-                    self.multiview_manager = MultiViewManager(
-                        video_base=vb,
-                        show_gaps=show_gaps,
-                        show_buttons=show_buttons,
-                    )
-                else:
-                    # 従来の個別ウィンドウを使用
-                    self.window_manager = WindowManager(
-                        video_base=vb,
-                        renderer_callback=self.remove_renderer,
-                        show_gaps=show_gaps,  # デバッグ用
-                        show_buttons=show_buttons,  # ボタン表示設定
-                    )
+                # 常に個別ウィンドウを使用
+                self.window_manager = WindowManager(
+                    video_base=vb,
+                    renderer_callback=self.remove_renderer,
+                    show_gaps=show_gaps,  # デバッグ用
+                    show_buttons=show_buttons,  # ボタン表示設定
+                )
             except Exception as e:
                 self.logger.warning(f"Failed to initialize window manager: {e}")
                 self.window_manager = None
-                self.multiview_manager = None
 
     def put(
         self,
@@ -426,83 +418,37 @@ class Render:
             )
             self.renderers[id] = r
 
-            # マルチビューウィンドウへの追加は、canvasが初期化された後に行う
-            # （put()メソッド内でcanvasが初期化されるため）
-
         r.put(
             frame=frame,
             pathitem=historyitem,
             absolute_position=absolute_position,
         )
 
-        # 品質が十分に高くなってから、multiview_managerに追加
-        if (
-            self.multiview_manager is not None
-            and hasattr(r, "canvas")
-            and r.canvas is not None
-            and r.score > 0.3
-        ):  # 品質閾値を0.3に戻す
-            # 既に追加されているかチェック（より確実に）
-            # もしpath_widgetsが存在しないなら、
-            if not hasattr(self.multiview_manager.window, "path_widgets"):
-                self.logger.info(
-                    f"Adding path {id} to multiview manager (first time, score: {r.score:.3f})"
-                )
-                self.multiview_manager.window.add_path(id, r)
-            elif id not in self.multiview_manager.window.path_widgets:
-                self.logger.info(
-                    f"Adding path {id} to multiview manager (score: {r.score:.3f})"
-                )
-                self.multiview_manager.window.add_path(id, r)
-            else:
-                # 既存パネルの場合も最新のRender_one参照を同期して即時更新
-                self.multiview_manager.window.renderers[id] = r
-                path_widget = self.multiview_manager.window.path_widgets.get(id)
-                if path_widget is not None:
-                    if hasattr(path_widget, "set_active"):
-                        path_widget.set_active(True)
-                    path_widget.update_image(r, force=True)
-                self.logger.debug(f"Path {id} already exists in multiview manager")
-        else:
-            self.logger.debug(f"{id=} Not rendered because:")
-            if self.multiview_manager is None:
-                self.logger.debug("- multiview_manager is None")
-            if not hasattr(r, "canvas"):
-                self.logger.debug("- canvas is not existent")
-            if r.canvas is None:
-                self.logger.debug("- canvas is None")
-            if r.score <= 0.3:
-                self.logger.debug(f"- {r.score=} is less than 0.3")
-                self.logger.debug(f"{[h.value for h in r.pathitem_history[-20:]]}")
-
         q = r.score
         # 最高品質が更新されたら、低品質ウィンドウをチェックして閉じる
         if self.max_score < q:
             self.max_score = q
             self.logger.debug(f"Max score updated: {self.max_score}")
-            # 閾値が上がったので、低品質ウィンドウを閉じる
-            # thresholdとの比較とそれによるRemoval処理は一旦停止（ユーザー要求）
-            # self._check_and_close_low_score_windows()
-            # multiview_managerからも低品質パネルを削除
-            # 一旦表示したパネルは消さないようにする（ユーザー要求）
-            # self._remove_low_score_from_multiview()
 
         # 閾値を下げる。あるいはこれを使わないほうがいいかも
         self.max_score *= 0.995
 
+    @property
+    def app(self):
+        if self.window_manager:
+            return self.window_manager.app
+        return None
+
     def mark_inactive(self, id: int):
         """
         MotionDetector.pathsから除外されたPathを「非アクティブ」として扱う。
-
-        ウィンドウは残したまま更新のみ停止したいケースで使用する。
         """
         if id not in self.renderers:
             return
 
-        renderer = self.renderers[id]
-        if self.multiview_manager is not None:
-            self.logger.info(f"Marking path {id} as inactive in MultiViewWindow")
-            self.multiview_manager.mark_path_inactive(id)
+        # パスが途切れた時点で処理完了（done）とする。
+        # ここでスコア判定が行われ、低品質なものはウィンドウが閉じる。
+        self.done(id)
 
     def done(self, id):
         """
@@ -519,14 +465,17 @@ class Render:
         Args:
             id: PathのID
         """
+        if id not in self.renderers:
+            return
+
+        r = self.renderers[id]
+        # r.done() の中でウィンドウが閉じられると、
+        # コールバック経由で self.renderers[id] が削除される可能性があるため、
+        # 実行前に一旦参照を保持し、実行後に存在確認を行う。
+        r.done()
+
+        # Pathを削除（まだ残っている場合のみ）
         if id in self.renderers:
-            r = self.renderers[id]
-            r.done()
-
-            # マルチビューウィンドウからは削除しない（動画処理完了時も画像を表示し続けるため）
-            # 品質が低い場合は _remove_low_score_from_multiview() で削除される
-
-            # Pathを削除（メモリ解放、以降の処理をスキップ）
             del self.renderers[id]
 
     def remove_renderer(self, id):
@@ -648,42 +597,6 @@ class Render:
                 f"Closed {len(to_close)} low-score windows during processing"
             )
 
-    def _remove_low_score_from_multiview(self, score_ratio: float = 0.5):
-        """
-        multiview_managerから低品質パネルを削除
-
-        Args:
-            score_ratio: 最高品質に対する比率（デフォルト: 0.5 = 50%）
-        """
-        if (
-            not self.multiview_manager
-            or not hasattr(self.multiview_manager, "window")
-            or not self.multiview_manager.window
-            or self.max_score == 0
-        ):
-            return
-
-        threshold = self.max_score * score_ratio
-        to_remove = []
-
-        # 削除するパネルをリストアップ
-        for path_id, renderer in self.renderers.items():
-            if (
-                path_id in self.multiview_manager.window.path_widgets
-                and renderer.score > 0
-                and renderer.score < threshold
-            ):
-                to_remove.append(path_id)
-
-        # パネルを削除
-        for path_id in to_remove:
-            renderer = self.renderers[path_id]
-            reason = (
-                f"品質が閾値以下 "
-                f"(score={renderer.score:.3f} < threshold={threshold:.3f}, max_score={self.max_score:.3f})"
-            )
-            self.multiview_manager.remove_path(path_id, reason=reason)
-
     def close_low_score_windows(self, score_ratio: float = 0.5):
         """
         処理完了後に品質が閾値以下のウィンドウを自動で閉じる（互換性のため）
@@ -707,5 +620,3 @@ class Render:
         """PyQt6ウィンドウが全て閉じられるまで待機（PyQt6使用時のみ）"""
         if self.window_manager:
             self.window_manager.wait_for_close()
-        elif self.multiview_manager:
-            self.multiview_manager.wait_for_close()

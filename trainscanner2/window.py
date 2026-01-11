@@ -148,19 +148,14 @@ class ImageWindow(QMainWindow):
             self.save_hires_button.clicked.connect(self.save_hires_image)
             button_layout.addWidget(self.save_hires_button)
 
-            # 閉じるボタン
-            self.close_button = QPushButton("閉じる")
-            self.close_button.clicked.connect(self.close)
-            button_layout.addWidget(self.close_button)
+            # 閉じるボタンは廃止されました
 
             # ボタンをレイアウトに追加
             main_layout.addLayout(button_layout)
 
         self.setCentralWidget(main_widget)
 
-        # macOS標準のCommand-W（Windows/LinuxではCtrl-W）でウィンドウを閉じる
-        close_shortcut = QShortcut(QKeySequence.StandardKey.Close, self)
-        close_shortcut.activated.connect(self.close)
+        # ウィンドウを閉じるショートカットも廃止されました
 
     def _on_scroll(self, value):
         """スクロールバーの値が変更されたときに呼ばれる"""
@@ -175,6 +170,19 @@ class ImageWindow(QMainWindow):
         - cv_imgではなく、render_one.canvasのImageStripsを直接使う
         - 従来のcv_img表示モードも維持（後方互換性）
         """
+        # タイトルに現在のスコアを表示
+        if self.render_one:
+            score = self.render_one.score
+            if self.video_base and self.video_base != "train_scan":
+                video_basename = os.path.basename(self.video_base)
+                self.setWindowTitle(
+                    f"TrainScanner - {video_basename} (ID: {self.window_id}) [Score: {score:.3f}]"
+                )
+            else:
+                self.setWindowTitle(
+                    f"TrainScanner - ID: {self.window_id} [Score: {score:.3f}]"
+                )
+
         # ImageStripsモードの場合
         if (
             self.render_one
@@ -388,10 +396,7 @@ class ImageWindow(QMainWindow):
                     json.dump(history_data, f, indent=2, ensure_ascii=False)
 
             # 保存成功のメッセージは表示しない（ワンクリック操作を維持）
-            # 保存が成功したらウィンドウを閉じる
-            # ただし、高精細保存の場合は閉じない（save_hires_imageで制御）
-            if not hasattr(self, "_skip_close_after_save"):
-                self.close()
+            # 保存が成功してもウィンドウは閉じないように変更されました
         except Exception as e:
             QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
 
@@ -519,8 +524,7 @@ class ImageWindow(QMainWindow):
 
             progress_dialog.close()
 
-            # 処理完了後、ウィンドウを閉じる
-            self.close()
+            # 処理完了後も、ウィンドウは閉じないように変更されました
 
         except Exception as e:
             progress_dialog.close()
