@@ -218,16 +218,19 @@ class ImageWindow(QMainWindow):
         return QColor.fromHsv(hue, sat, val)
 
     def _update_background_color(self):
-        """スコアに応じてウィンドウの背景色を更新"""
+        """スコアに応じてウィンドウの背景色を更新（画像表示部分は除く）"""
         if self.render_one and not self.is_preview:
             score = self.render_one.score
             bg_color = self._get_score_color(score)
             color_name = bg_color.name()
-            # ウィンドウとメインウィジェットの背景色を設定
+            # ウィンドウの背景色を設定
+            # 画像表示ウィジェットには直接白背景を設定して透過を防ぐ
             self.setStyleSheet(f"QMainWindow {{ background-color: {color_name}; }}")
-            self.main_widget.setStyleSheet(
-                f"QWidget {{ background-color: {color_name}; }}"
-            )
+
+            # 画像表示ウィジェットには明示的に白背景を設定（透過を防ぐ）
+            self.imagestrips_widget.setStyleSheet("background-color: white;")
+            self.scroll_area.setStyleSheet("background-color: white;")
+            self.image_label.setStyleSheet("background-color: white;")
 
     def update_image(self, cv_img, force=False):
         """

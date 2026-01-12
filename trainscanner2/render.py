@@ -66,9 +66,9 @@ def rotated_placement(
         )
     )
 
-    # スコアに応じて彩色を適用
-    if score > 0:
-        frame = apply_score_coloring(frame, score)
+    # 画像への彩色は無効化（背景色のみでスコアを表示）
+    # if score > 0:
+    #     frame = apply_score_coloring(frame, score)
 
     rotated = cv2.warpAffine(frame, R, (rw, rh))
     # cv2.imshow("rotated", rotated)

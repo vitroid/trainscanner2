@@ -181,8 +181,10 @@ class ImageStripsWidget(QWidget):
 
     def paintEvent(self, event):
         """ウィジェットを描画"""
+        painter = QPainter(self)
+        # 背景を白で塗りつぶす（透過を防ぐ）
+        painter.fillRect(self.rect(), Qt.GlobalColor.white)
         if self.cached_pixmap:
-            painter = QPainter(self)
             painter.drawPixmap(0, 0, self.cached_pixmap)
 
     def sizeHint(self):
