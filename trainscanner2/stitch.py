@@ -38,8 +38,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     logger = getLogger(__name__)
 
     magnify = int(1 / tspos2["scaling_factor"] + 1)
-    unblurred_frames = FIFO(2)
-    unblurred_frame_history = FIFO(5)
+    unblurred_frames = FIFO(2)  # カラー画像を保持（render.put用）
+    unblurred_frame_history = FIFO(5)  # グレースケール画像を保持（平均背景計算用）
     # diff画像をたくわえ、動きの大きい領域を検出する。
     # blurmask = BlurMask(lifetime=20)
 
@@ -48,7 +48,11 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     damping = 0.05
     dumped = None
 
-    mask = None
+    # std_hdrの結果をキャッシュ（最適化）
+    hdr_base_cache = None  # 前回のhdr_nextを次のhdr_baseとして使用
+    hdr_avg_cache = None
+    averaged_background_sum = None  # 平均背景の合計（差分更新用、グレースケール）
+    averaged_background_count = 0  # 平均背景のフレーム数
 
     # 進捗表示の設定
     history_items = tspos2["history"]
@@ -79,29 +83,80 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
         unblurred_frame, delta, abs_loc = antishaker.add_frame(raw_frame)
 
         # unblurred_scaled_framesにはてぶれを修正し,最初のフレームの位置に背景がそろえられた画像が入る。
-        unblurred_frames.append(unblurred_frame)
-        unblurred_frame_history.append(unblurred_frame)
+        unblurred_frames.append(unblurred_frame)  # カラー画像を保持（render.put用）
+
+        # グレースケール変換（平均背景計算用、最適化）
+        if len(unblurred_frame.shape) == 3:
+            unblurred_frame_gray = cv2.cvtColor(unblurred_frame, cv2.COLOR_BGR2GRAY)
+        else:
+            unblurred_frame_gray = unblurred_frame
+
+        # 平均背景の差分更新（最適化、グレースケールで処理）
+        if averaged_background_sum is None:
+            # 初回: 初期化
+            averaged_background_sum = unblurred_frame_gray.astype(np.float32)
+            averaged_background_count = 1
+        else:
+            # 新しいフレームを追加
+            averaged_background_sum += unblurred_frame_gray.astype(np.float32)
+            averaged_background_count += 1
+
+            # FIFOが満杯の場合、古いフレームを削除
+            if len(unblurred_frame_history.queue) >= unblurred_frame_history.maxlen:
+                # 削除されるフレームを取得（FIFOの先頭）
+                old_frame_gray = unblurred_frame_history.queue[0]
+                averaged_background_sum -= old_frame_gray.astype(np.float32)
+                averaged_background_count -= 1
+
+        unblurred_frame_history.append(unblurred_frame_gray)  # グレースケール画像を保存
 
         if len(unblurred_frame_history.queue) < 2:
             continue
-        # 平均画像=背景
-        averaged_background = np.zeros_like(unblurred_frames.queue[0], dtype=np.float32)
-        for fh in unblurred_frame_history.queue:
-            averaged_background += fh
-        averaged_background /= len(unblurred_frame_history.queue)
 
-        hdr_avg = std_hdr(averaged_background)
-        # グレースケールに変換
-        base_frame = unblurred_frames.queue[0]
-        next_frame = unblurred_frames.queue[1]
+        # 平均背景を計算（差分更新済み、グレースケール）
+        averaged_background = averaged_background_sum / averaged_background_count
 
-        hdr_base = std_hdr(base_frame)
+        # hdr_avgの再計算（平均背景が変更された時のみ）
+        # FIFOが満杯になった後は毎フレーム変更されるが、それまでは変更されない
+        # averaged_backgroundは既にグレースケールなので、std_hdr内で変換をスキップ
+        if hdr_avg_cache is None or averaged_background_count != len(
+            unblurred_frame_history.queue
+        ):
+            hdr_avg = std_hdr(averaged_background)
+            hdr_avg_cache = hdr_avg
+        else:
+            hdr_avg = hdr_avg_cache
+
+        # グレースケール変換（base_frameとnext_frame用、最適化）
+        base_frame_color = unblurred_frames.queue[0]
+        next_frame_color = unblurred_frames.queue[1]
+
+        # グレースケール変換（std_hdr用）
+        if len(base_frame_color.shape) == 3:
+            base_frame = cv2.cvtColor(base_frame_color, cv2.COLOR_BGR2GRAY)
+        else:
+            base_frame = base_frame_color
+
+        if len(next_frame_color.shape) == 3:
+            next_frame = cv2.cvtColor(next_frame_color, cv2.COLOR_BGR2GRAY)
+        else:
+            next_frame = next_frame_color
+
+        # hdr_base: 前回のhdr_nextを再利用（base_frameは前回のnext_frame）
+        if hdr_base_cache is not None:
+            hdr_base = hdr_base_cache
+        else:
+            # 初回のみ計算（base_frameは既にグレースケール）
+            hdr_base = std_hdr(base_frame)
+
+        # hdr_next: 新しいnext_frameに対してのみ計算（next_frameは既にグレースケール）
         hdr_next = std_hdr(next_frame)
+        hdr_base_cache = hdr_next  # 次回のhdr_baseとして保存
 
         # 平均背景をさしひいて、前景を強調する。
         # 今はマスクを使っていない。
-        base_masked = hdr_base.copy() - hdr_avg
-        next_masked = hdr_next.copy() - hdr_avg
+        base_masked = hdr_base - hdr_avg  # .copy()を削除（最適化）
+        next_masked = hdr_next - hdr_avg  # .copy()を削除（最適化）
 
         # 照合する幅は、delta*magnifyの周囲±magnify
         max_shift = int(magnify)
