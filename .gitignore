@@ -212,3 +212,4 @@ motions_test.json
 *.pngs/
 experimental/
 *.tspos2
+stitch_profile.prof
