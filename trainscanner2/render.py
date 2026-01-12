@@ -1,10 +1,11 @@
+from collections import deque
 import numpy as np
 import cv2
 from logging import getLogger, INFO
 import os
 import json
 
-from trainscanner2 import FIFO, PathItem
+from trainscanner2 import PathItem
 from trainscanner2.imagestrips import ImageStrips
 from trainscanner2.window import WindowManager
 
@@ -100,7 +101,7 @@ class Render_one:
         skip_display: bool = False,  # ウィンドウ表示をスキップ（高精細画像生成時など）
     ):
         self.num_leading_frames = num_leading_frames
-        self.leading_frames = FIFO(num_leading_frames)
+        self.leading_frames = deque(maxlen=num_leading_frames)
         self.pathitem_history = []  # PathItemのリスト
         self.abs_positions = []  # 各フレームのabsolute_position（手ぶれ補正）
         self.train_positions = []  # 各フレームでのtrain_position（再計算不要に）

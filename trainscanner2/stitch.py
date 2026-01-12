@@ -11,10 +11,11 @@ import os
 from tqdm import tqdm
 import time
 
+from collections import deque
 from pyperbox import Rect
 from trainscanner2.image import match_rect, diffImage, ImageRect
 from trainscanner2.video import video_loader_factory
-from trainscanner2 import FIFO, std_hdr
+from trainscanner2 import std_hdr
 from trainscanner2.analyze import normalize, BlurMask
 from trainscanner2.antishake import AntiShaker2
 from trainscanner2.render import PathItem, WindowManager
@@ -38,8 +39,10 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
     logger = getLogger(__name__)
 
     magnify = int(1 / tspos2["scaling_factor"] + 1)
-    unblurred_frames = FIFO(2)  # カラー画像を保持（render.put用）
-    unblurred_frame_history = FIFO(5)  # グレースケール画像を保持（平均背景計算用）
+    unblurred_frames = deque(maxlen=2)  # カラー画像を保持（render.put用）
+    unblurred_frame_history = deque(
+        maxlen=5
+    )  # グレースケール画像を保持（平均背景計算用）
     # diff画像をたくわえ、動きの大きい領域を検出する。
     # blurmask = BlurMask(lifetime=20)
 
@@ -101,26 +104,26 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
             averaged_background_sum += unblurred_frame_gray.astype(np.float32)
             averaged_background_count += 1
 
-            # FIFOが満杯の場合、古いフレームを削除
-            if len(unblurred_frame_history.queue) >= unblurred_frame_history.maxlen:
-                # 削除されるフレームを取得（FIFOの先頭）
-                old_frame_gray = unblurred_frame_history.queue[0]
+            # dequeが満杯の場合、古いフレームを削除
+            if len(unblurred_frame_history) >= unblurred_frame_history.maxlen:
+                # 削除されるフレームを取得（dequeの先頭）
+                old_frame_gray = unblurred_frame_history[0]
                 averaged_background_sum -= old_frame_gray.astype(np.float32)
                 averaged_background_count -= 1
 
         unblurred_frame_history.append(unblurred_frame_gray)  # グレースケール画像を保存
 
-        if len(unblurred_frame_history.queue) < 2:
+        if len(unblurred_frame_history) < 2:
             continue
 
         # 平均背景を計算（差分更新済み、グレースケール）
         averaged_background = averaged_background_sum / averaged_background_count
 
         # hdr_avgの再計算（平均背景が変更された時のみ）
-        # FIFOが満杯になった後は毎フレーム変更されるが、それまでは変更されない
+        # dequeが満杯になった後は毎フレーム変更されるが、それまでは変更されない
         # averaged_backgroundは既にグレースケールなので、std_hdr内で変換をスキップ
         if hdr_avg_cache is None or averaged_background_count != len(
-            unblurred_frame_history.queue
+            unblurred_frame_history
         ):
             hdr_avg = std_hdr(averaged_background)
             hdr_avg_cache = hdr_avg
@@ -128,8 +131,8 @@ def analyze_iter(vl, tspos2: dict, show_progress=False, progress_callback=None):
             hdr_avg = hdr_avg_cache
 
         # グレースケール変換（base_frameとnext_frame用、最適化）
-        base_frame_color = unblurred_frames.queue[0]
-        next_frame_color = unblurred_frames.queue[1]
+        base_frame_color = unblurred_frames[0]
+        next_frame_color = unblurred_frames[1]
 
         # グレースケール変換（std_hdr用）
         if len(base_frame_color.shape) == 3:

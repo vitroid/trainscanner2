@@ -1,3 +1,4 @@
+from collections import deque
 import cv2
 import numpy as np
 import sys
@@ -8,7 +9,7 @@ import json
 from pyperbox import Rect
 from trainscanner2.image import match_rect, MatchRect, ImageRect
 from trainscanner2.video import video_loader_factory
-from trainscanner2 import FIFO, std_hdr
+from trainscanner2 import std_hdr
 from trainscanner2.antishake import AntiShaker2
 
 
@@ -80,14 +81,14 @@ class BlurMask3:
     logger = getLogger(__name__)
 
     def __init__(self, interval=30):
-        self.images = FIFO(interval + 1)
+        self.images = deque(maxlen=interval + 1)
         self.mask = None
 
     def add_frame(self, std_img):
         # assert diff does not contain nan
         self.images.append(std_img)
 
-        diff = (self.images.queue[0] - self.images.queue[-1]) ** 2
+        diff = (self.images[0] - self.images[-1]) ** 2
 
         # 型をfloat32に統一
         diff = diff.astype(np.float32, copy=False)
@@ -119,13 +120,13 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()
     raw_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
-    unblurred_scaled_frames = FIFO(2)
+    unblurred_scaled_frames = deque(maxlen=2)
     estimate = 5
-    unblurred_scaled_frame_history = FIFO(estimate)
+    unblurred_scaled_frame_history = deque(maxlen=estimate)
     unblurred_scaled_frames.append(raw_frame)
     unblurred_scaled_frame_history.append(raw_frame)
 
-    # mask = np.ones(unblurred_scaled_frames.queue[0].shape[:2], dtype=np.float32)
+    # mask = np.ones(unblurred_scaled_frames[0].shape[:2], dtype=np.float32)
 
     while True:
         frame_index = vl.head
@@ -150,16 +151,16 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
 
         # 平均画像=背景
         averaged_background = np.zeros_like(
-            unblurred_scaled_frames.queue[0], dtype=np.float32
+            unblurred_scaled_frames[0], dtype=np.float32
         )
-        for fh in unblurred_scaled_frame_history.queue:
+        for fh in unblurred_scaled_frame_history:
             averaged_background += fh
-        averaged_background /= len(unblurred_scaled_frame_history.queue)
+        averaged_background /= len(unblurred_scaled_frame_history)
 
         hdr_avg = std_hdr(averaged_background)
         # グレースケールに変換
-        base_frame = unblurred_scaled_frames.queue[0]
-        next_frame = unblurred_scaled_frames.queue[1]
+        base_frame = unblurred_scaled_frames[0]
+        next_frame = unblurred_scaled_frames[1]
 
         hdr_base = std_hdr(base_frame)
         hdr_next = std_hdr(next_frame)
