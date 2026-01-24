@@ -19,7 +19,9 @@ from trainscanner2.render import Render
 from trainscanner2.droparea import DropAreaWidget
 
 
-def process_video(videofile: str, multiview_manager=None, wait=False, video_base=None):
+def process_video(
+    videofile: str, multiview_manager=None, wait=False, video_base=None, antishake=1
+):
     """
     動画ファイルを処理する関数
     """
@@ -62,7 +64,10 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
             use_multiview=True,
         )
 
-    antishaker = AntiShaker2(velocity=1)
+    if antishake > 0:
+        antishaker = AntiShaker2(velocity=antishake)
+    else:
+        antishaker = None
 
     def iterator():
         for (
@@ -99,7 +104,8 @@ def process_video(videofile: str, multiview_manager=None, wait=False, video_base
         )
 
         if len(paths) == 0:
-            antishaker.abs_loc = (0, 0)
+            if antishaker is not None:
+                antishaker.abs_loc = (0, 0)
 
         for id, path in paths.items():
             renderer.put(
@@ -194,10 +200,18 @@ def download_from_url(url: str, progress_callback=None) -> tuple[str, str]:
         return downloaded_file, safe_title
 
 
-def main():
-    if "-d" in sys.argv or "--debug" in sys.argv:
+import click
+
+
+@click.command()
+@click.option("-d", "--debug", is_flag=True, help="Enable debug mode")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose mode")
+@click.option("-a", "--antishake", type=int, help="Shake reduction magnitude (0=off)")
+@click.argument("videofile", type=str, required=True)
+def main(debug, verbose, antishake, videofile):
+    if debug:
         basicConfig(level=DEBUG)
-    elif "-v" in sys.argv or "--verbose" in sys.argv:
+    elif verbose:
         basicConfig(level=INFO)
     else:
         # デフォルトではWARNINGに設定して、並列スレッド内からのGUI操作(imshow等)によるクラッシュを防ぐ
@@ -298,6 +312,7 @@ def main():
                     multiview_manager=manager,
                     wait=False,
                     video_base=video_base,
+                    antishake=antishake,
                 )
             finally:
                 # 処理が終わったら（または中断されたら）フラグを下ろす

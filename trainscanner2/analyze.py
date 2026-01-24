@@ -112,10 +112,6 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
     """
     logger = getLogger(__name__)
 
-    # 背景の移動をもとにてぶれを検出し、最初のフレームの位置から視野が流れていかないようにする。
-    if antishaker is None:
-        antishaker = AntiShaker2(velocity=1)
-
     # 最初のフレームを読み、スケールして保管する。
     raw_frame = vl.next()
     raw_frame = cv2.resize(raw_frame, (0, 0), fx=scaling_ratio, fy=scaling_ratio)
@@ -140,7 +136,12 @@ def analyze_iter(vl, scaling_ratio=1.0, antishaker=None):
 
         # 直前のフレームからの変位deltaを測定し、積算してフレームごとの絶対位置abs_locを求める。
         # unblurred_scaled_frameは位置あわせしたあとのフレーム。以後の処理はこれを基準とする。
-        unblurred_scaled_frame, delta, abs_loc = antishaker.add_frame(scaled_frame)
+        if antishaker is None:
+            unblurred_scaled_frame = scaled_frame
+            delta = (0, 0)
+            abs_loc = (0, 0)
+        else:
+            unblurred_scaled_frame, delta, abs_loc = antishaker.add_frame(scaled_frame)
 
         # unblurred_scaled_framesにはてぶれを修正し,最初のフレームの位置に背景がそろえられた画像が入る。
         unblurred_scaled_frames.append(unblurred_scaled_frame)

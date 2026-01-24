@@ -28,6 +28,7 @@ tqdm = "^4.67.1"
 opencv-python = "^4.8.0"
 # Local dependencies - these must be on PyPI for a successful PyPI release
 yt-dlp = "^2025.12.8"
+click = "^8.3.1"
 
 [tool.poetry.scripts]
 trainscanner2 = "trainscanner2.trainscanner2:main"
